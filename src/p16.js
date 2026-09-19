@@ -4,10 +4,12 @@
    the two score table ids and the trophy ids. Until then everything
    online stays switched off and the game works exactly as before.
    ================================================================ */
+// The real IDs and key live in gjcfg.js, which is built into the game but kept out of the public source.
+const GJC = typeof GJ_CFG !== "undefined" ? GJ_CFG : {};
 const GJ = {
-  gameId: "",            // e.g. "912345"
-  key: "",               // the game's PRIVATE key
-  tables: {arcade: "", daily: ""},
+  gameId: GJC.gameId || "",
+  key: GJC.key || "",
+  tables: {arcade: (GJC.tables && GJC.tables.arcade) || "", daily: (GJC.tables && GJC.tables.daily) || ""},
   trophies: {            // achievement id -> GameJolt trophy id
     trained: "", first_kill: "", perfect10: "", chain10: "", chain25: "", trick: "", wave10: "", wave20: "",
     score50k: "", warden: "", furnace: "", hydra: "", echo: "", clean_boss: "", grade_s: "", ascend: "",
@@ -16,6 +18,7 @@ const GJ = {
   },
   board: {arcade: null, daily: null, status: "", t: 0}
 };
+if (GJC.trophies) Object.assign(GJ.trophies, GJC.trophies);
 const gjReady = () => !!(GJ.gameId && GJ.key);
 const gjUser = () => meta.gj && meta.gj.ok ? meta.gj : null;
 
