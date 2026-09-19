@@ -71,6 +71,7 @@ const NODE_COL = {altar:C.pl, fight:C.rd, elite:C.or, shop:C.ye, rest:C.li, even
 const RunMap = {
   enter() { music(run.depth === 5 ? "basement" : run.depth === 4 ? "signal" : "map"); this.showMods = false; saveRun(); this.hover = -1; },
   draw() {
+    if (!run) return go(TitleScene);
     const pal = PALS[DEPTH_PAL[run.depth]];
     menuBg(pal);
     const nodes = run.map.nodes, avail = availNodes();
