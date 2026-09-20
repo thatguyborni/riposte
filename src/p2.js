@@ -1,5 +1,5 @@
 "use strict";
-const VERSION = "4.1.3";
+const VERSION = "4.2.0";
 /* ================================================================
    RIPOSTE v3 — core: screen, font, sprites, audio, save
    ================================================================ */
@@ -627,8 +627,9 @@ function freshMeta() {
     upg: {plate:0, change:0, coolant:0, lucky:0, carto:0},
     fragments: [false, false, false, false, false],
     secrets: {vault1:false, vault2:false, vault3:false, untouched:false, static:false, mirror:false, signal:false, echo:false},
-    stats: {runs:0, wins:0, bestDepth:0, kills:0, perfects:0, trueEnd:0, mines:0, bestWave:0},
-    arcade: [], initials: "AAA",
+    stats: {runs:0, wins:0, bestDepth:0, kills:0, perfects:0, trueEnd:0, mines:0, bestWave:0,
+      arcadeGames:0, dailies:0, bestScore:0, bestScoreWave:0, activeTime:0},
+    arcade: [], initials: "AAA", name: "", pid: "", sent: {},
     seen: {}, ach: {}, history: [], npcs: {}, asc: 0, daily: null, dailyBest: 0, dailyFriends: [],
     synSeen: {}, modsSeen: {}, tutorialDone: false, hubSeen: false, gj: null, migr4: false,
     logs: {}, tapesDue: {}, flags: {}, playTime: 0, hauntSeen: false, milo: "",

@@ -80,6 +80,7 @@ function gjLogin(user, token, quiet) {
     if (!quiet) toast("GAMEJOLT: LOGGED IN AS " + normText(user), C.li);
     // trophies earned while offline catch up now
     for (const id in meta.ach || {}) gjTrophy(id);
+    if (typeof onlineEvent === "function") onlineEvent();   // best score and player list follow the account
     return true;
   }).catch(e => { if (!quiet) toast("GAMEJOLT LOGIN FAILED", C.rd); return false; });
 }
@@ -94,7 +95,7 @@ function gjAddScore(table, score, label, extra, guest) {
   if (!gjReady() || !GJ.tables[table]) return Promise.resolve(false);
   const u = gjUser();
   const p = {score: label, sort: score, table_id: GJ.tables[table], extra_data: extra || ""};
-  if (u) { p.username = u.user; p.user_token = u.token; } else p.guest = guest || meta.initials || "AAA";
+  if (u) { p.username = u.user; p.user_token = u.token; } else p.guest = guest || myName();
   return gjCall("scores/add", p).then(() => { GJ.board.t = 0; return true; }).catch(() => false);
 }
 function gjArcadeScore(score, wave, initials) { return gjAddScore("arcade", score, score + " PTS ~ WAVE " + wave, "w" + wave, initials); }
@@ -137,9 +138,11 @@ const OnlineScene = {
     if (!gjReady()) {
       wrap("THE ONLINE BOARD ISN'T SWITCHED ON IN THIS BUILD YET. ONCE RIPOSTE IS ON GAMEJOLT AND ITS GAME ID AND KEY ARE FILLED IN, SCORES AND TROPHIES SYNC HERE AUTOMATICALLY.", 300)
         .forEach((l, i) => txt(l, W / 2, 60 + i * 9, C.lg, 1, "c"));
+      btn(this, "CHANGE NAME", W / 2 - 50, 204, 100, 12, () => go(NameScene, {change: true}), {col: C.ye});
     } else {
       const u = gjUser();
-      txt(u ? "LOGGED IN AS " + normText(u.user) : "PLAYING AS A GUEST (" + (meta.initials || "AAA") + ")", W / 2, 28, u ? C.li : C.gy, 1, "c");
+      txt(u ? "LOGGED IN AS " + normText(u.user) + (cleanName(u.user) !== myName() ? " (" + myName() + ")" : "")
+        : "PLAYING AS " + myName() + " (GUEST)", W / 2, 28, u ? C.li : C.lg, 1, "c");
       panel(8, 38, 180, 150, C.bl);
       txt("WORLD ARCADE TOP 10", 98, 43, C.bl, 1, "c");
       panel(196, 38, 180, 150, C.pk);
@@ -156,8 +159,10 @@ const OnlineScene = {
       drawRows(GJ.board.arcade, 16, 180);
       drawRows(gjDailyRows(), 204, 368);
       if (GJ.board.status) txt(GJ.board.status, W / 2, 192, C.gy, 1, "c");
-      btn(this, u ? "LOG OUT" : "LOG IN", W / 2 - 104, 204, 100, 12, () => u ? gjLogout() : openGjLogin(), {col: C.li});
-      btn(this, "REFRESH", W / 2 + 4, 204, 100, 12, () => gjFetchBoards(true), {col: C.bl});
+      btn(this, u ? "LOG OUT" : "LOG IN", 8, 204, 88, 12, () => u ? gjLogout() : openGjLogin(), {col: C.li});
+      btn(this, "PLAYERS", 100, 204, 88, 12, () => go(PlayersScene), {col: C.ye});
+      btn(this, "CHANGE NAME", 192, 204, 88, 12, () => go(NameScene, {change: true}), {col: C.pk});
+      btn(this, "REFRESH", 284, 204, 88, 12, () => gjFetchBoards(true), {col: C.bl});
     }
     btn(this, "BACK", W / 2 - 30, 222, 60, 12, () => this.back(), {col: C.gy});
     endItems(this);

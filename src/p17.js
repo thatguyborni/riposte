@@ -7,7 +7,7 @@ let WHO = "";
 try { if (window.rpWho) window.rpWho().then(n => { WHO = String(n || ""); }).catch(() => {}); } catch (e) {}
 function playerName() {
   const n = normText(WHO).replace(/[^A-Z0-9 ]/g, "").trim().slice(0, 12);
-  return n || meta.initials || "PLAYER";
+  return n || meta.name || meta.initials || "PLAYER";
 }
 function dateStr(d) {
   d = d || new Date();

@@ -291,6 +291,7 @@ function endRun(kind) {
     meta.daily = {date: run.daily, done: true, score: dailyScore, depth: run.depth, win: won};
     meta.dailyBest = Math.max(meta.dailyBest || 0, dailyScore);
     unlockAch("daily");
+    meta.stats.dailies = (meta.stats.dailies || 0) + 1;
     try { if (typeof gjDailyScore === "function") gjDailyScore(dailyScore); } catch (e) {}
   }
   if (!Array.isArray(meta.history)) meta.history = [];
@@ -307,6 +308,7 @@ function endRun(kind) {
     meta.secrets.echo = true;
   }
   saveMeta(); clearRun(); checkTapes();
+  try { if (typeof onlineEvent === "function") onlineEvent(); } catch (e) {}
   const summary = {kind, tokens: t, depth: run.depth, kills: run.kills, perfects: run.perfects, bosses: run.bosses,
     mods: ownedMods().map(id => MODS[id].n + (run.mods[id] > 1 ? " X" + run.mods[id] : "")), unlocks: unlocks.concat(extra), glass,
     asc: run.asc || 0, curses: nCurse, daily: run.daily, dailyScore, grades: run.grades};

@@ -236,6 +236,7 @@ function frame(now) {
     if (inCombat() && G && G.mode !== "attract" && !G.over && G.lives === 1) FX.wobble = Math.max(FX.wobble, 0.12);
     pollPad(raw);
     hauntTick(raw);
+    if (typeof onlineTick === "function") onlineTick(raw);
     if (scene.update) scene.update(raw);
     L.setTransform(RS, 0, 0, RS, 0, 0); L.globalAlpha = 1; L.globalCompositeOperation = "source-over";
     scene.draw();
@@ -260,7 +261,7 @@ function frame(now) {
 let updatePending = false, updateNoticed = false;
 function safeToReload() {
   return !modalOpen && [TitleScene, RunMap, WorkshopScene, RecordsScene, ArcadeOver, ShieldSelect, RunOver,
-    HubScene, CodexScene, HistoryScene, OnlineScene, DailyScene, SettingsScene].includes(scene);
+    HubScene, CodexScene, HistoryScene, OnlineScene, DailyScene, SettingsScene, PlayersScene].includes(scene);
 }
 function applyUpdate() {
   updatePending = false;
@@ -325,7 +326,7 @@ buildSprites();
 fit();
 let resumed = false;
 try { resumed = !!sessionStorage.getItem("riposte.resume"); } catch (e) {}
-go(resumed ? TitleScene : BootScene);
+go(resumed ? afterBoot() : BootScene);   // after a live update, players without a name still get asked once
 try {
   const where = sessionStorage.getItem("riposte.resume");
   const updated = sessionStorage.getItem("riposte.updated");

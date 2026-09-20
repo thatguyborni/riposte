@@ -243,9 +243,22 @@ const ArcadeOver = {
     this.res = {score: G.score, wave: G.wave, chain: G.bestChain, perf: G.perfects}; music("map");
     const ph = phantomEntry();
     if (ph && !ph.ghost2 && this.res.score > ph.s && meta.milo !== "stay" && haunted(2)) setTimeout(() => whisper("HE DIDN'T LIKE THAT"), 1200);
-    meta.stats.bestWave = Math.max(meta.stats.bestWave || 0, this.res.wave); saveMeta();
+    const r = this.res;
+    meta.stats.bestWave = Math.max(meta.stats.bestWave || 0, r.wave);
+    meta.stats.arcadeGames = (meta.stats.arcadeGames || 0) + 1;
+    this.newBest = r.score > 0 && r.score > (meta.stats.bestScore || 0);
+    if (this.newBest) { meta.stats.bestScore = r.score; meta.stats.bestScoreWave = r.wave; }
+    // the cabinet's top 10 fills itself in with the player's initials: no typing after every game
+    this.entry = null;
+    if (arcadeQualifies(r.score)) {
+      this.entry = {i: meta.initials || "AAA", s: r.score, w: r.wave, me: true};
+      meta.arcade.push(this.entry);
+      meta.arcade.sort((a, b) => b.s - a.s);
+      meta.arcade = meta.arcade.slice(0, 10);
+    }
+    saveMeta();
     checkTapes();
-    if (gjUser() && this.res.score > 0) gjArcadeScore(this.res.score, this.res.wave).then(ok => { if (ok) toast("SCORE SENT TO GAMEJOLT", C.li); });
+    if (typeof gjSyncBest === "function") { gjSyncBest(true); playerPush(); }
   },
   draw() {
     menuBg();
@@ -253,13 +266,11 @@ const ArcadeOver = {
     const r = this.res;
     const rows = [["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain], ["PERFECTS", r.perf]];
     rows.forEach((row, i) => { txt(row[0], W / 2 - 60, 74 + i * 12, C.gy); txt(String(row[1]), W / 2 + 60, 74 + i * 12, C.wh, 1, "r"); });
-    const q = arcadeQualifies(r.score);
-    const mine = meta.arcade.filter(e => !e.friend);
-    const isBest = r.score > 0 && (!mine.length || r.score > mine[0].s);
-    if (q && Math.floor(T * 2) % 2) txt(isBest ? "NEW HIGH SCORE!" : "YOU MADE THE TOP 10", W / 2, 130, isBest ? C.ye : C.bl, 1, "c");
+    txt("PLAYER: " + (typeof myName === "function" ? myName() : meta.initials), W / 2, 60, C.gy, 1, "c");
+    if ((this.newBest || this.entry) && Math.floor(T * 2) % 2) txt(this.newBest ? "NEW PERSONAL BEST!" : "YOU MADE THE TOP 10", W / 2, 130, this.newBest ? C.ye : C.bl, 1, "c");
     beginItems(this);
     let y = 144;
-    if (q) { btn(this, "ENTER INITIALS", W / 2 - 50, y, 100, 12, () => go(InitialsScene, r), {col: C.ye}); y += 15; }
+    if (this.entry) { const e = this.entry; btn(this, "SEE RECORDS", W / 2 - 50, y, 100, 12, () => go(RecordsScene, {hl: e}), {col: C.ye}); y += 15; }
     btn(this, "PLAY AGAIN", W / 2 - 50, y, 100, 12, () => go(ArcadeScene)); y += 15;
     btn(this, "TITLE", W / 2 - 50, y, 100, 12, () => go(TitleScene), {col: C.gy});
     endItems(this);
@@ -270,56 +281,6 @@ const TIPS_ARCADE = ["CATCH LATE, ON THE INNER LINE, FOR A PERFECT.", "A KILLING
   "AMBER PLATES THROW YOUR SHOTS BACK. WAIT FOR THE GAP.", "RETURNED SHOTS BOUNCE OFF A WALL ONCE.",
   "PULSE CATCHES EVERYTHING CLOSE AT ONCE.", "PURPLE LINES MEAN A SHOT IS COMING. GOOD."];
 function pick0(a, i) { return a[Math.abs(i) % a.length]; }
-
-const InitialsScene = {
-  captureKeys: true,
-  enter(r) { this.r = r; this.letters = (meta.initials || "AAA").split("").slice(0, 3); while (this.letters.length < 3) this.letters.push("A"); this.pos = 0; },
-  draw() {
-    menuBg();
-    title("NEW HIGH SCORE", 36, C.ye);
-    txt(String(this.r.score), W / 2, 60, C.wh, 2, "c");
-    txt("ENTER YOUR INITIALS", W / 2, 84, C.lg, 1, "c");
-    for (let i = 0; i < 3; i++) {
-      const x = W / 2 - 40 + i * 28;
-      const on = i === this.pos;
-      txt(this.letters[i], x + 2, 104, on ? C.ye : C.wh, 4);
-      if (on && Math.floor(T * 3) % 2) R(x, 128, 16, 2, C.ye);
-      if (on) { txt("^", x + 6, 96, C.gy); }
-    }
-    txt("UP/DOWN OR TYPE A LETTER  ~  ENTER TO CONFIRM  ~  ESC TO SKIP", W / 2, 150, C.gy, 1, "c");
-    beginItems(this);
-    btn(this, "DONE", W / 2 - 64, 168, 60, 12, () => this.confirm(), {col: C.ye});
-    btn(this, "SKIP", W / 2 + 4, 168, 60, 12, () => go(TitleScene), {col: C.gy});
-    endItems(this);
-  },
-  key(k) {
-    const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    const cur = this.letters[this.pos];
-    if (k === "arrowup" || k === "w") { this.letters[this.pos] = A[(A.indexOf(cur) + 1) % A.length]; sfx.move(); }
-    else if (k === "arrowdown" || k === "s") { this.letters[this.pos] = A[(A.indexOf(cur) - 1 + A.length) % A.length]; sfx.move(); }
-    else if (k === "arrowleft") this.pos = Math.max(0, this.pos - 1);
-    else if (k === "arrowright") this.pos = Math.min(2, this.pos + 1);
-    else if (k === "backspace") this.pos = Math.max(0, this.pos - 1);
-    else if (k === "enter") this.confirm();
-    else if (k === "escape") go(TitleScene);
-    else if (k.length === 1 && A.includes(k.toUpperCase())) { this.letters[this.pos] = k.toUpperCase(); sfx.move(); if (this.pos < 2) this.pos++; }
-    return true;
-  },
-  confirm() {
-    const ini = this.letters.join("");
-    meta.initials = ini;
-    if (!meta.flags) meta.flags = {};
-    meta.flags.initials = 1;
-    const entry = {i: ini, s: this.r.score, w: this.r.wave, me: true};
-    meta.arcade.push(entry);
-    meta.arcade.sort((a, b) => b.s - a.s);
-    meta.arcade = meta.arcade.slice(0, 10);
-    saveMeta(); sfx.select();
-    if (!gjUser()) gjArcadeScore(this.r.score, this.r.wave, ini);
-    go(RecordsScene, {hl: entry});
-  }
-};
-
 
 /* ---------------- boot sequence ---------------- */
 let BOOT_LINES = [];
@@ -349,7 +310,7 @@ const BootScene = {
     if (this.letters === 7 && !this.chord) { this.chord = true; seq([523, 659, 784, 1047], 60, "square", 0.12, 0.3); fxGlitch(0.3); }
     if (t > this.logoAt + 3.2) this.finish();
   },
-  finish() { if (this.done) return; this.done = true; FX.power = 1; go(TitleScene); },
+  finish() { if (this.done) return; this.done = true; FX.power = 1; go(typeof afterBoot === "function" ? afterBoot() : TitleScene); },
   draw() {
     R(0, 0, W, H, "#020308");
     const t = this.t;
