@@ -12,9 +12,11 @@ It runs in any modern browser. On Windows it comes as a small standalone program
 ## Layout
 
 ```
-src/        the game: p1.html (page + styles) and p2.js … p16.js, joined into one file
+src/        the game: p1.html (page + styles) and p2.js … p20.js, joined into one file
 launcher/   the Windows program (Go + WebView2), which embeds the built page
-build.sh    joins the parts, checks the script and builds riposte.html and Riposte.exe
+docs/       the phone version, served by GitHub Pages (installable, works offline)
+web/        the template for the phone version's offline worker
+build.sh    joins the parts, checks the script and builds riposte.html, Riposte.exe and docs/
 ```
 
 ## Building
@@ -35,6 +37,12 @@ This writes `dist/riposte.html` (runs anywhere; open it in a browser) and `dist/
 
 Installed copies check `releases/latest` at start-up and every six hours. A newer `riposte.html` loads at the next safe moment in the game. A newer `Riposte.exe` is swapped in on the next launch.
 
+## Phones and tablets
+
+The game plays in phone browsers with touch controls: the left thumb moves, the right thumb aims the shield, and PULSE, DASH and pause buttons sit beside the screen. GitHub Pages serves `docs/` as an installable app. On Android, open the page in Chrome and choose *Install app*. On an iPhone, open it in Safari and choose Share → *Add to Home Screen*. It then runs full screen and works offline.
+
 ## Online features
 
-GameJolt scores and trophies are set up in `src/p16.js` (`GJ.gameId`, `GJ.key`, table and trophy ids). They stay switched off while those are empty.
+GameJolt scores, trophies and the player list use the settings in `src/gjcfg.js`: the game ID, private key, score table IDs and trophy IDs. That file isn't in the repository, because it holds the private key. Copy `src/gjcfg.example.js` to `src/gjcfg.js` and fill it in. Without it the build still works, with the online parts switched off.
+
+Players pick a name the first time they start the game. Their best arcade score is sent automatically, and each player keeps one small record in the game's GameJolt data store (name, games, time played, best score, last seen). The PLAYERS page under Records → Online lists everyone.

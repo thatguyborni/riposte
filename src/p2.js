@@ -1,5 +1,5 @@
 "use strict";
-const VERSION = "4.2.0";
+const VERSION = "4.3.0";
 /* ================================================================
    RIPOSTE v3 — core: screen, font, sprites, audio, save
    ================================================================ */
@@ -634,7 +634,8 @@ function freshMeta() {
     synSeen: {}, modsSeen: {}, tutorialDone: false, hubSeen: false, gj: null, migr4: false,
     logs: {}, tapesDue: {}, flags: {}, playTime: 0, hauntSeen: false, milo: "",
     settings: {sound: 2, crt: true, fullscreen: false, vol: 8, musVol: 8, sfxVol: 8, curve: 2, tint: 0,
-      phosphor: true, shake: true, effects: 2, rumble: true, haunt: 2}
+      phosphor: true, shake: true, effects: 2, rumble: true, haunt: 2,
+      taim: 0, tsize: 1, tfs: true}
   };
 }
 function mergeDeep(base, over) {

@@ -20,7 +20,7 @@ function inCombat() { return scene === ArcadeScene || scene === RunFight || scen
 function btn(sc, label, x, y, w, h, act, o) {
   o = o || {};
   const i = sc.items.length, sel = i === sc.sel, dis = !!o.disabled;
-  sc.items.push({x, y, w, h, act, disabled: dis});
+  sc.items.push({x, y, w, h, act, disabled: dis, oneTap: !!o.oneTap});
   const col = dis ? C.gy : (o.col || C.wh);
   if (sel && !dis) { R(x, y, w, h, col); } else { R(x, y, w, h, C.ink); RO(x, y, w, h, sel ? col : (o.dim || C.gy)); }
   if (label != null) {
@@ -45,14 +45,25 @@ function menuKey(sc, k) {
 function menuMove(sc, x, y) {
   sc.items.forEach((it, i) => { if (x >= it.x && x < it.x + it.w && y >= it.y && y < it.y + it.h && sc.sel !== i) { sc.sel = i; } });
 }
+let menuClickX = null;   // where a click landed, for rows that do different things left and right
 function menuClick(sc, x, y) {
-  for (const it of sc.items) {
-    if (x >= it.x && x < it.x + it.w && y >= it.y && y < it.y + it.h) {
-      if (!it.disabled) { sfx.select(); pressFx(it); it.act(); } else { sfx.deny(); fxWobble(0.3); }
-      return true;
+  let hit = sc.items.find(it => x >= it.x && x < it.x + it.w && y >= it.y && y < it.y + it.h);
+  if (!hit && lastPointerTouch) {
+    // fingers are bigger than cursors: take the nearest item within a few pixels
+    let bd = 7;
+    for (const it of sc.items) {
+      const dx = Math.max(it.x - x, 0, x - (it.x + it.w)), dy = Math.max(it.y - y, 0, y - (it.y + it.h)), d = Math.hypot(dx, dy);
+      if (d < bd) { bd = d; hit = it; }
     }
   }
-  return false;
+  if (!hit) return false;
+  const i = sc.items.indexOf(hit);
+  // screens that describe the selected thing: on touch the first tap shows it, the second one picks it
+  if (sc.twoTap && lastPointerTouch && sc.sel !== i && !hit.disabled && !hit.oneTap) { sc.sel = i; sfx.move(); return true; }
+  sc.sel = i;
+  if (!hit.disabled) { sfx.select(); pressFx(hit); menuClickX = x; try { hit.act(); } finally { menuClickX = null; } }
+  else { sfx.deny(); fxWobble(0.3); }
+  return true;
 }
 function beginItems(sc) { sc.items = []; }
 function endItems(sc) { if (sc.sel >= sc.items.length) sc.sel = Math.max(0, sc.items.length - 1); }
@@ -112,7 +123,7 @@ const TitleScene = {
     }
     if (G.possess) { if (Math.floor(T * 2) % 2) txt("PLAY WITH ME", W / 2, 206, C.rd, 2, "c"); }
     else if (Math.floor(T * 2) % 2) txt("INSERT COIN", W / 2, 206, C.ye, 2, "c");
-    txt("PRESS ANY KEY", W / 2, 224, C.lg, 1, "c");
+    txt(ctl("PRESS ANY KEY", "PRESS ANY BUTTON", "TAP TO PLAY"), W / 2, 224, C.lg, 1, "c");
   },
   draw() {
     drawCombat({noHud: true});
@@ -166,7 +177,7 @@ const TitleScene = {
     txt("DEEPEST", 12, 156, C.gy); txt(meta.stats.bestDepth ? "DEPTH " + meta.stats.bestDepth : "-", 12, 163, C.wh);
     if (!(this.newArmed && T - this.newArmed < 3) && allFragments() && !meta.secrets.echo && Math.floor(T * 2) % 2) txt("THE SIGNAL IS COMPLETE", W / 2, 206, C.pk, 1, "c");
     txt("TROPHIES", 12, 178, C.gy); txt(achCount() + "/" + ACH.length, 12, 185, C.ye);
-    txt(PAD.connected ? "L-STICK MOVE  ~  R-STICK AIM  ~  RT PULSE  ~  LT DASH" : "WASD MOVE  ~  MOUSE AIM  ~  SPACE PULSE  ~  SHIFT DASH", W / 2, 224, C.gy, 1, "c");
+    txt(ctl("WASD MOVE  ~  MOUSE AIM  ~  SPACE PULSE  ~  SHIFT DASH", "L-STICK MOVE  ~  R-STICK AIM  ~  RT PULSE  ~  LT DASH", "LEFT THUMB MOVES  ~  RIGHT THUMB AIMS  ~  PULSE / DASH BUTTONS"), W / 2, 224, C.gy, 1, "c");
     txt("V" + VERSION, W - 6, 224, C.nv, 1, "r");
   }
 };
@@ -184,17 +195,19 @@ function beginDescent() {
 }
 
 /* ---------------- pause overlay (shared by combat scenes) ---------------- */
-function drawPause(sc, quitLabel, quitAct) {
+function drawPause(sc, quitLabel, quitAct, extra) {
   if (sc.pauseSettings) return drawPauseSettings(sc);
   L.globalAlpha = 0.7; R(0, 0, W, H, C.k); L.globalAlpha = 1;
   title("PAUSED", 64);
   beginItems(sc);
-  btn(sc, "RESUME", W / 2 - 50, 92, 100, 12, () => { G.paused = false; });
-  btn(sc, "SOUND: " + ["OFF", "FX", "ALL"][meta.settings.sound], W / 2 - 50, 108, 100, 12, cycleSound);
-  btn(sc, "SETTINGS", W / 2 - 50, 124, 100, 12, () => { sc.pauseSettings = true; sc.sel = 0; }, {col: C.bl});
+  let y = 92;
+  btn(sc, "RESUME", W / 2 - 50, y, 100, 12, () => { G.paused = false; }); y += 16;
+  if (extra) { btn(sc, extra.label, W / 2 - 50, y, 100, 12, extra.act, {col: C.ye}); y += 16; }
+  btn(sc, "SOUND: " + ["OFF", "FX", "ALL"][meta.settings.sound], W / 2 - 50, y, 100, 12, cycleSound); y += 16;
+  btn(sc, "SETTINGS", W / 2 - 50, y, 100, 12, () => { sc.pauseSettings = true; sc.sel = 0; }, {col: C.bl}); y += 16;
   // destructive: ask twice
   const armed = sc.quitArmed && T - sc.quitArmed < 3;
-  btn(sc, armed ? "SURE? PRESS AGAIN" : quitLabel, W / 2 - 50, 140, 100, 12, () => {
+  btn(sc, armed ? "SURE? PRESS AGAIN" : quitLabel, W / 2 - 50, y, 100, 12, () => {
     if (armed) { sc.quitArmed = 0; quitAct(); } else { sc.quitArmed = T; sfx.deny(); fxWobble(0.4); }
   }, {col: C.rd});
   endItems(sc);
@@ -339,7 +352,7 @@ const BootScene = {
     }
     if (this.letters === 7) {
       txt("CATCH IT. GIVE IT BACK.", W / 2, 104, C.lg, 1, "c");
-      if (Math.floor(t * 2.5) % 2) txt("PRESS ANY KEY", W / 2, 150, C.wh, 1, "c");
+      if (Math.floor(t * 2.5) % 2) txt(ctl("PRESS ANY KEY", "PRESS ANY BUTTON", "TAP TO START"), W / 2, 150, C.wh, 1, "c");
       txt("V" + VERSION, W / 2, 222, C.nv, 1, "c");
     }
   },

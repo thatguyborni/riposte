@@ -90,8 +90,8 @@ const NameScene = {
     txt(n, x0, y0, C.wh, sc);
     for (let i = 0; i < NAME_MAX; i++) R(x0 + i * cw, y0 + 18, cw - sc, 1, i < this.letters.length ? C.lg : C.gy);
     if (this.letters.length < NAME_MAX && Math.floor(T * 3) % 2) R(x0 + this.letters.length * cw, y0, cw - sc, 15, C.ye);
-    txt(PAD.connected ? "UP/DOWN: LETTER  ~  RIGHT: NEXT  ~  LEFT: DELETE  ~  A: DONE" : "TYPE YOUR NAME, THEN PRESS ENTER",
-      W / 2, 108, C.gy, 1, "c");
+    txt(ctl("TYPE YOUR NAME, THEN PRESS ENTER", "UP/DOWN: LETTER  ~  RIGHT: NEXT  ~  LEFT: DELETE  ~  A: DONE", "TAP THE BOX TO TYPE YOUR NAME"),
+      W / 2, 108, isTouch() ? C.lg : C.gy, 1, "c");
     if (this.err) txt(this.err, W / 2, 118, C.rd, 1, "c");
     beginItems(this);
     const v = this.value();
@@ -107,6 +107,20 @@ const NameScene = {
       : gjReady() ? "OPTIONAL: LOG IN WITH GAMEJOLT TO KEEP YOUR SCORES ON YOUR ACCOUNT AND EARN TROPHIES." : "";
     wrap(foot, 300).forEach((l, i) => txt(l, W / 2, 188 + i * 9, C.la, 1, "c"));
     txt("YOU CAN CHANGE IT ANY TIME IN RECORDS > ONLINE.", W / 2, 214, C.gy, 1, "c");
+  },
+  // phones have no keys to press: the box opens the phone's own keyboard
+  click(x, y) {
+    if (!(y >= 60 && y < 100 && x >= 70 && x < 314)) return false;
+    this.typeOnPhone();
+    return true;
+  },
+  typeOnPhone() {
+    openModal("YOUR NAME", "UP TO " + NAME_MAX + " LETTERS AND NUMBERS. IT GOES ON THE ONLINE SCORE BOARDS.", this.letters.join(""), "OK", v => {
+      const n = cleanName(v);
+      if (!n) return modalMsg("TYPE A NAME FIRST.", true);
+      this.letters = n.split(""); this.touched = true; this.err = "";
+      closeModal();
+    });
   },
   key(k) {
     if (k === "enter") { this.confirm(); return true; }

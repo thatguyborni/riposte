@@ -69,6 +69,7 @@ const NODE_ICON = {altar:"i_altar", fight:"i_fight", elite:"i_elite", shop:"i_sh
 const NODE_COL = {altar:C.pl, fight:C.rd, elite:C.or, shop:C.ye, rest:C.li, event:C.la, treasure:C.ye, boss:C.rd, vault:C.pk};
 
 const RunMap = {
+  twoTap: true,   // on a phone: tap a room to read what it is, tap it again to go
   enter() { music(run.depth === 5 ? "basement" : run.depth === 4 ? "signal" : "map"); this.showMods = false; saveRun(); this.hover = -1; },
   draw() {
     if (!run) return go(TitleScene);
@@ -119,8 +120,9 @@ const RunMap = {
       const info = NODE_INFO[selNode.type];
       txt(info[0], 4, 231, NODE_COL[selNode.type]);
       txt(info[1], 4 + tw(info[0]) + 8, 231, C.lg);
-    } else txt("CHOOSE YOUR PATH", 4, 231, C.lg);
-    txt("TAB: MODS", W - 4, 231, C.gy, 1, "r");
+    } else txt(isTouch() ? "TAP A ROOM TO SEE IT, AGAIN TO GO" : "CHOOSE YOUR PATH", 4, 231, C.lg);
+    if (isTouch() || PAD.connected) btn(this, "MODS", W - 44, 227, 40, 11, () => { this.showMods = true; }, {col: C.la, oneTap: true});
+    else txt("TAB: MODS", W - 4, 231, C.gy, 1, "r");
     if (this.showMods) drawModsOverlay();
   },
   key(k) {

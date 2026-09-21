@@ -166,6 +166,7 @@ let lastPointerTouch = false;
 window.addEventListener("keydown", e => {
   if (modalOpen || !e || typeof e.key !== "string") return;
   const k = e.key.toLowerCase();
+  lastPointerTouch = false; usedKeyboard = true;
   if ([" ", "arrowup", "arrowdown", "arrowleft", "arrowright", "tab"].includes(k)) e.preventDefault();
   audioInit();
   if (e.repeat && (k === " " || k === "enter" || k === "tab")) return;
@@ -181,35 +182,29 @@ window.addEventListener("keyup", e => { if (e && typeof e.key === "string") keys
 window.addEventListener("blur", () => { for (const k in keys) keys[k] = false; if (inCombat() && G && !G.over) G.paused = true; });
 
 screenCv.addEventListener("pointermove", e => {
+  if (e.pointerType === "touch") { if (touchCombatOn()) { touchMove(e); return; } }
   const p = toLo(e);
   if (Math.abs(p.x - mouse.x) + Math.abs(p.y - mouse.y) > 2) { lastInput = T; PAD.useAim = false; }
   mouse.x = p.x; mouse.y = p.y;
-  if (touch.on && e.pointerId === touch.id) { touch.x = p.x; touch.y = p.y; }
   if (scene && !(inCombat() && G && !G.paused)) menuMove(scene, p.x, p.y);
 });
 screenCv.addEventListener("pointerdown", e => {
   audioInit(); lastInput = T;
-  const p = toLo(e); mouse.x = p.x; mouse.y = p.y;
   lastPointerTouch = e.pointerType === "touch";
+  if (e.pointerType === "mouse") mouseUsed = true;
   if (G) G.touch = lastPointerTouch;
-  if (inCombat() && G && !G.paused) {
-    if (e.button === 2) { doPulse(); return; }
-    if (lastPointerTouch) { touch.on = true; touch.id = e.pointerId; touch.ox = touch.x = p.x; touch.oy = touch.y = p.y; try { screenCv.setPointerCapture(e.pointerId); } catch (er) {} }
-    return;
-  }
+  if (lastPointerTouch) touchFirstGesture();
+  // thumbs in a fight: sticks and buttons
+  if (lastPointerTouch && touchCombatOn()) { touchDown(e); return; }
+  const p = toLo(e); mouse.x = p.x; mouse.y = p.y;
+  if (inCombat() && G && !G.paused) { if (e.button === 2) doPulse(); return; }
   if (scene && scene.click && scene.click(p.x, p.y)) return;
-  if (scene) { menuMove(scene, p.x, p.y); menuClick(scene, p.x, p.y); }
+  if (scene) { if (!lastPointerTouch) menuMove(scene, p.x, p.y); menuClick(scene, p.x, p.y); }
 });
-const endTouch = e => { if (touch.on && e.pointerId === touch.id) { touch.on = false; } };
-screenCv.addEventListener("pointerup", e => {
-  if (touch.on && e.pointerId === touch.id) {
-    const moved = Math.hypot(touch.x - touch.ox, touch.y - touch.oy);
-    touch.on = false;
-    if (moved < 4 && inCombat()) doPulse();   // a tap pulses
-  }
-});
-screenCv.addEventListener("pointercancel", endTouch);
-screenCv.addEventListener("contextmenu", e => { e.preventDefault(); if (inCombat()) doPulse(); });
+screenCv.addEventListener("pointerup", e => { if (e.pointerType === "touch") { touchUp(e); audioInit(); } });
+screenCv.addEventListener("pointercancel", e => { if (e.pointerType === "touch") touchUp(e); });
+// a long press on a phone opens the context menu: never let that pulse
+screenCv.addEventListener("contextmenu", e => { e.preventDefault(); if (inCombat() && !lastPointerTouch) doPulse(); });
 
 /* ---------------- loop ---------------- */
 let last = performance.now(), errCount = 0;
@@ -237,6 +232,7 @@ function frame(now) {
     pollPad(raw);
     hauntTick(raw);
     if (typeof onlineTick === "function") onlineTick(raw);
+    drawTouchUI();
     if (scene.update) scene.update(raw);
     L.setTransform(RS, 0, 0, RS, 0, 0); L.globalAlpha = 1; L.globalCompositeOperation = "source-over";
     scene.draw();
@@ -310,7 +306,7 @@ function toggleFullscreen(silent) {
   }
   try {
     if (document.fullscreenElement) document.exitFullscreen();
-    else document.documentElement.requestFullscreen();
+    else goFullscreen();
   } catch (e) {}
 }
 

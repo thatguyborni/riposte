@@ -3,7 +3,6 @@
    ================================================================ */
 const keys = Object.create(null);
 const mouse = {x: ACX, y: ACY - 60};
-const touch = {on:false, id:null, ox:0, oy:0, x:0, y:0};
 
 function combatTick(raw) {
   if (!G || G.paused) return;
@@ -100,13 +99,11 @@ function combatStep(dt) {
     if (keys.d || keys.arrowright) ax += 1;
     if (keys.w || keys.arrowup) ay -= 1;
     if (keys.s || keys.arrowdown) ay += 1;
-    if (touch.on) { ax = clamp((touch.x - touch.ox) / 18, -1, 1); ay = clamp((touch.y - touch.oy) / 18, -1, 1); }
+    if (TCH.mx || TCH.my) { ax = TCH.mx; ay = TCH.my; }
     if (PAD.connected && (PAD.lx || PAD.ly)) { ax = PAD.lx; ay = PAD.ly; }
     const m = Math.hypot(ax, ay); if (m > 1) { ax /= m; ay /= m; }
-    if (G.touch) {
-      const nb = nearestHostile(80);
-      if (nb) p.aim = Math.atan2(nb.y - p.y, nb.x - p.x);
-    } else if (PAD.connected && PAD.useAim) {
+    if (isTouch()) touchAim(p);
+    else if (PAD.connected && PAD.useAim) {
       if (Math.hypot(PAD.rx, PAD.ry) > 0.35) p.aim = Math.atan2(PAD.ry, PAD.rx);   // otherwise hold the last aim
     } else p.aim = Math.atan2(mouse.y - p.y, mouse.x - p.x);
   }

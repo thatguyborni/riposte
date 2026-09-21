@@ -1,10 +1,10 @@
 /* ================================================================
    Training room — teaches the moves one at a time, and checks you did them
    ================================================================ */
-const ctl = (kb, pad) => PAD.connected ? pad : kb;
+const ctl = (kb, pad, tch) => PAD.connected ? pad : (tch && isTouch() ? tch : kb);
 const TRAIN_STEPS = [
-  {t: () => ctl("MOVE AROUND WITH W A S D.", "MOVE AROUND WITH THE LEFT STICK."), done: g => g.trainMoved > 140},
-  {t: () => ctl("YOUR SHIELD FOLLOWS THE MOUSE. SWING IT ALL THE WAY AROUND YOU.", "AIM THE SHIELD WITH THE RIGHT STICK. SWING IT ALL THE WAY AROUND."),
+  {t: () => ctl("MOVE AROUND WITH W A S D.", "MOVE AROUND WITH THE LEFT STICK.", "PUT YOUR LEFT THUMB DOWN ANYWHERE ON THE LEFT AND DRAG TO MOVE."), done: g => g.trainMoved > 140},
+  {t: () => ctl("YOUR SHIELD FOLLOWS THE MOUSE. SWING IT ALL THE WAY AROUND YOU.", "AIM THE SHIELD WITH THE RIGHT STICK. SWING IT ALL THE WAY AROUND.", "DRAG YOUR RIGHT THUMB ON THE RIGHT SIDE TO AIM THE SHIELD. SWING IT ALL THE WAY AROUND."),
    done: g => g.trainSwing > TAU * 1.2},
   {t: () => "A SHOT IS COMING. POINT YOUR SHIELD AT IT TO CATCH IT.", setup: g => trainSpawn("sentry", 0.7), done: g => g.parries >= 1},
   {t: () => "CAUGHT SHOTS FLY BACK AND HUNT THE NEAREST ENEMY. THEIR BULLETS ARE YOUR ONLY WEAPON. FINISH IT.",
@@ -12,9 +12,9 @@ const TRAIN_STEPS = [
   {t: () => "PERFECT CATCH: KEEP YOUR SHIELD AWAY, THEN CATCH THE SHOT LATE, RIGHT ON THE THIN WHITE INNER LINE.",
    hint: "WAIT UNTIL IT'S ALMOST TOUCHING YOU, THEN SNAP THE SHIELD ONTO IT.",
    setup: g => { g.foes = []; g.bullets = []; trainSpawn("sentry", 0.5); }, done: g => g.perfects >= 1},
-  {t: () => ctl("TOO MUCH COMING AT ONCE? PRESS SPACE TO PULSE. IT CATCHES EVERYTHING CLOSE TO YOU.", "TOO MUCH COMING AT ONCE? PULL RT TO PULSE. IT CATCHES EVERYTHING CLOSE TO YOU."),
+  {t: () => ctl("TOO MUCH COMING AT ONCE? PRESS SPACE TO PULSE. IT CATCHES EVERYTHING CLOSE TO YOU.", "TOO MUCH COMING AT ONCE? PULL RT TO PULSE. IT CATCHES EVERYTHING CLOSE TO YOU.", "TOO MUCH COMING AT ONCE? TAP PULSE. IT CATCHES EVERYTHING CLOSE TO YOU."),
    setup: g => { trainSpawn("spreader", 0.7); trainSpawn("spreader", 0.7); g.p.pulseCd = 0; }, done: g => g.pulses >= 1},
-  {t: () => ctl("PRESS SHIFT TO DASH. NOTHING CAN HIT YOU MID-DASH.", "PULL LT (OR PRESS A) TO DASH. NOTHING CAN HIT YOU MID-DASH."), done: g => g.dashes >= 1},
+  {t: () => ctl("PRESS SHIFT TO DASH. NOTHING CAN HIT YOU MID-DASH.", "PULL LT (OR PRESS A) TO DASH. NOTHING CAN HIT YOU MID-DASH.", "TAP DASH. NOTHING CAN HIT YOU MID-DASH."), done: g => g.dashes >= 1},
   {t: () => "AMBER ENEMIES WEAR A ROTATING PLATE THAT THROWS YOUR SHOTS BACK. HIT THROUGH THE GAP, OR BOUNCE A SHOT OFF A WALL INTO THEIR BACK.",
    setup: g => { g.foes = []; g.bullets = []; g.kills = 0; trainSpawn("armor", 0.7); }, done: g => g.kills >= 1 && !g.foes.length}
 ];
@@ -67,7 +67,7 @@ const TrainingScene = {
     R(0, 0, W, 15, C.k); R(0, 14, W, 1, C.nv);
     txt("TRAINING", 12, 5, C.bl);
     for (let i = 0; i < TRAIN_STEPS.length; i++) R(70 + i * 9, 6, 6, 3, i < G.step ? C.li : i === G.step ? C.wh : C.nv);
-    txt(ctl("ENTER: SKIP STEP  ~  ESC: MENU", "START: MENU"), W - 12, 5, C.gy, 1, "r");
+    txt(ctl("ENTER: SKIP STEP  ~  ESC: MENU", "START: MENU", "PAUSE: MENU AND SKIP STEP"), W - 12, 5, C.gy, 1, "r");
     const st = TRAIN_STEPS[G.step];
     if (st && !this.done) {
       const lines = wrap(st.t(), 330);
@@ -78,7 +78,7 @@ const TrainingScene = {
       hint.forEach((l, i) => txt(l, W / 2, 237 - h + (lines.length + i) * 8, C.ye, 1, "c"));
     }
     this.items = [];
-    if (G.paused) drawPause(this, "LEAVE TRAINING", () => go(backTarget()));
+    if (G.paused) drawPause(this, "LEAVE TRAINING", () => go(backTarget()), this.done ? null : {label: "SKIP STEP", act: () => { G.paused = false; this.next(); }});
   },
   key(k) {
     if (!G.paused && k === "enter" && !this.done) { this.next(); return true; }

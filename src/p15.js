@@ -28,7 +28,7 @@ const HubScene = {
     this.fig = haunted(2) && meta.flags && meta.flags.crash1 ? FIG[Math.min(3, Math.max(0, h - 2))] : null;
     this.figGone = false; this.lightsT = 8 + rand() * 12; this.dark = 0; this.winT = 6 + rand() * 10; this.winFig = 0;
     music(meta.milo === "free" ? "map" : haunted(3) ? "basement" : "map");
-    if (!meta.hubSeen) { meta.hubSeen = true; saveMeta(); this.dialog = {who: null, text: "THE BACK ROOM. WALK UP TO THINGS AND PRESS ENTER (OR A). EVERYTHING BEHIND THE CABINET LIVES HERE."}; }
+    if (!meta.hubSeen) { meta.hubSeen = true; saveMeta(); this.dialog = {who: null, text: "THE BACK ROOM. " + ctl("WALK UP TO THINGS AND PRESS ENTER.", "WALK UP TO THINGS AND PRESS A.", "TAP THINGS TO WALK OVER AND USE THEM.") + " EVERYTHING BEHIND THE CABINET LIVES HERE."}; }
   },
   back() { if (this.dialog) this.dialog = null; else go(TitleScene); },
   spots() {
@@ -237,7 +237,7 @@ const HubScene = {
       const w = tw(s) + 14;
       panel(W / 2 - w / 2, 218, w, 12, C.gy);
       txt(s, W / 2, 222, C.wh, 1, "c");
-    } else txt(PAD.connected ? "STICK TO WALK  ~  A TO USE  ~  B TO LEAVE" : "WASD / CLICK TO WALK  ~  ENTER TO USE  ~  ESC TO LEAVE", W / 2, 222, C.gy, 1, "c");
+    } else txt(ctl("WASD / CLICK TO WALK  ~  ENTER TO USE  ~  ESC TO LEAVE", "STICK TO WALK  ~  A TO USE  ~  B TO LEAVE", "TAP SOMETHING TO WALK OVER AND USE IT  ~  THE DOOR LEADS OUT"), W / 2, 222, C.gy, 1, "c");
   }
 };
 
@@ -317,7 +317,7 @@ const CodexScene = {
         const s = btn(this, null, cx, cy, 164, 13, () => { if (got) go(TapeScene, {id: i, from: CodexScene}); }, {col: got ? C.pk : C.gy, dim: C.nv, disabled: !got});
         txt(String(i).padStart(2, "0"), cx + 4, cy + 4, s && got ? C.k : C.gy);
         txt(got ? TAPES[i].h : tapeDue(i) ? "WAITING IN THE BACK ROOM" : "???", cx + 20, cy + 4, s && got ? C.k : got ? C.lg : C.gy);
-        if (s) info = got ? tapeDate(i) + "  ~  PRESS ENTER TO PLAY IT AGAIN." : "NOT FOUND YET.";
+        if (s) info = got ? tapeDate(i) + "  ~  " + ctl("PRESS ENTER", "PRESS A", "TAP IT") + " TO PLAY IT AGAIN." : "NOT FOUND YET.";
       }
       txt(tapesRead() + "/" + TAPE_COUNT, W - 24, 9, C.gy, 1, "r");
     }
@@ -325,7 +325,7 @@ const CodexScene = {
     endItems(this);
     R(24, 196, 336, 26, C.ink); RO(24, 196, 336, 26, C.nv);
     if (info) wrap(info, 322).slice(0, 3).forEach((l, i) => txt(l, 31, 200 + i * 7, C.lg));
-    else txt("Q / E TO SWITCH TABS", W / 2, 206, C.gy, 1, "c");
+    else txt(ctl("Q / E TO SWITCH TABS", "LB / RB TO SWITCH TABS", "TAP A TAB AT THE TOP"), W / 2, 206, C.gy, 1, "c");
   }
 };
 

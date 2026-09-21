@@ -6,7 +6,8 @@
 const PAD = {connected: false, lx: 0, ly: 0, rx: 0, ry: 0, prev: {}, useAim: false, navT: 0, navDir: null, name: ""};
 
 function padRumble(strong, weak, ms) {
-  if (!PAD.connected || meta.settings.rumble === false) return;
+  if (!PAD.connected) { buzz(Math.round((ms || 120) * Math.max(strong || 0.5, weak || 0.3))); return; }
+  if (meta.settings.rumble === false) return;
   try {
     const gp = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find(p => p && p.connected);
     if (gp && gp.vibrationActuator && gp.vibrationActuator.playEffect)

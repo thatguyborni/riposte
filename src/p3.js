@@ -179,6 +179,7 @@ function parry(b, ang, perfect) {
     G.comboT = Math.max(G.comboT, perfect ? 3.2 : 1.6);
   }
   perfect ? sfx.perfect(G.combo) : sfx.parry(G.combo);
+  if (perfect) buzz(14);
 }
 function doPulse() {
   if (!G || G.mode === "attract" || G.over || G.paused || G.p.pulseCd > 0) return;
@@ -209,6 +210,7 @@ function doDash() {
   if (keys.d || keys.arrowright) dx += 1;
   if (keys.w || keys.arrowup) dy -= 1;
   if (keys.s || keys.arrowdown) dy += 1;
+  if (!dx && !dy && (TCH.mx || TCH.my)) { dx = TCH.mx; dy = TCH.my; }
   if (!dx && !dy) { const sp = Math.hypot(p.vx, p.vy); if (sp > 5) { dx = p.vx / sp; dy = p.vy / sp; } else { dx = Math.cos(p.aim); dy = Math.sin(p.aim); } }
   const m = Math.hypot(dx, dy) || 1;
   p.vx = dx / m * 340 * G.S.moveMul; p.vy = dy / m * 340 * G.S.moveMul;
