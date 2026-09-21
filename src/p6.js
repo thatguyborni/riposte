@@ -206,8 +206,9 @@ function startRun(shield, opts) {
     pendingId: null, runPerf: 0, fights: 0, curses: [], asc: opts.daily ? 0 : (opts.asc || 0),
     daily: opts.daily || null, seed: opts.daily ? "daily:" + opts.daily : null, rs: null, grades: {S: 0, A: 0, B: 0, C: 0}};
   if (run.seed) run.rs = seedNum(run.seed);
-  const lives = 3 + upgOn("plate") - (run.asc >= 2 ? 1 : 0);
-  run.lives = run.maxLives = lives;
+  run.dl = opts.daily ? DIFF_NORMAL : diffLevel();       // a descent keeps the difficulty it started with
+  const lives = 3 + upgOn("plate") - (run.asc >= 2 ? 1 : 0) + DIFFS[run.dl].lives;
+  run.lives = run.maxLives = Math.max(1, lives);
   run.coins = 30 * upgOn("change");
   if (shield === "glass") { run.lives = run.maxLives = 1; gainMod(rollMod("r")); }
   if (npcHere("pip") && !run.daily) {
@@ -221,7 +222,7 @@ function startRun(shield, opts) {
   run.map = genMap(1);
   saveRun();
 }
-function saveRun() { try { if (run) localStorage.setItem(RUN_KEY, JSON.stringify(run)); } catch (e) {} }
+function saveRun() { if (NO_SAVE) return; try { if (run) localStorage.setItem(RUN_KEY, JSON.stringify(run)); } catch (e) {} }
 function clearRun() { try { localStorage.removeItem(RUN_KEY); } catch (e) {} }
 function loadRun() {
   try {
@@ -292,7 +293,7 @@ function endRun(kind) {
     meta.dailyBest = Math.max(meta.dailyBest || 0, dailyScore);
     unlockAch("daily");
     meta.stats.dailies = (meta.stats.dailies || 0) + 1;
-    try { if (typeof gjDailyScore === "function") gjDailyScore(dailyScore); } catch (e) {}
+    try { if (typeof gjDailyScore === "function") gjDailyScore(dailyScore, {date: run.daily, d: run.depth, k: run.kills | 0, p: run.perfects | 0, b: run.bosses | 0, w: won ? 1 : 0, t: kind === "true" ? 1 : 0}); } catch (e) {}
   }
   if (!Array.isArray(meta.history)) meta.history = [];
   meta.history.unshift({d: Date.now(), k: kind, dp: run.depth, ki: run.kills, pf: run.perfects, sh: run.shield,

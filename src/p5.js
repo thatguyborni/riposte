@@ -145,6 +145,7 @@ function drawCombat(opts) {
   drawPlayer();
   L.restore();
   if (G.dark) drawDarkness();
+  drawDefenses();
   for (const f of G.floats) {
     if (f.life / f.max < 0.3 && Math.floor(f.life * 20) % 2) continue;
     txtS(f.t, f.x, f.y, f.col, 1, "c");

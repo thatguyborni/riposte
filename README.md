@@ -12,7 +12,7 @@ It runs in any modern browser. On Windows it comes as a small standalone program
 ## Layout
 
 ```
-src/        the game: p1.html (page + styles) and p2.js … p20.js, joined into one file
+src/        the game: p1.html (page + styles) and p2.js … p24.js, joined into one file
 launcher/   the Windows program (Go + WebView2), which embeds the built page
 docs/       the phone version, served by GitHub Pages (installable, works offline)
 web/        the template for the phone version's offline worker
@@ -36,6 +36,10 @@ This writes `dist/riposte.html` (runs anywhere; open it in a browser) and `dist/
 3. Create a GitHub release tagged `vX.Y.Z` and attach `dist/riposte.html` (and `dist/Riposte.exe` if the launcher changed).
 
 Installed copies check `releases/latest` at start-up and every six hours. A newer `riposte.html` loads at the next safe moment in the game. A newer `Riposte.exe` is swapped in on the next launch.
+
+## Score checks and cloud saves
+
+Every score the game sends carries the stats behind it (wave, kills, best chain, catches, time) and a checksum. The boards inside the game only show entries that add up (`src/p22.js`). Players logged in with GameJolt also get their save kept in their own GameJolt data store, one slot per device. Small per-device counters decide whether another device's save is newer, and if two devices both moved on, the game asks which to keep (`src/p23.js`).
 
 ## Phones and tablets
 

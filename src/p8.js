@@ -22,7 +22,7 @@ function finishNode() {
 }
 
 const ShieldSelect = {
-  back() { go(TitleScene); },
+  back() { go(ModesScene); },
   enter() { this.asc = Math.min(meta.asc || 0, this.asc == null ? (meta.asc || 0) : this.asc); },
   key(k) {
     if (!(meta.asc > 0)) return false;

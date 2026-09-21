@@ -147,27 +147,22 @@ const TitleScene = {
     txt(sub, W / 2, 66, subCol, 1, "c");
 
     beginItems(this);
-    const bx = W / 2 - 55, bw = 110, gap = 14;
-    let y = 80;
-    btn(this, "ARCADE", bx, y, bw, 11, () => go(ArcadeScene)); y += gap;
+    const bx = W / 2 - 55, bw = 110;
+    const gap = 16;
+    let y = 86;
+    btn(this, "ARCADE", bx, y, bw, 12, () => go(ArcadeScene)); y += gap;
+    // descent, daily and training live in GAME MODES
     const sv = this.saved && !this.saved.daily ? this.saved : null;
-    if (sv) {
-      btn(this, "CONTINUE DESCENT", bx, y, bw, 11, () => { run = sv; go(RunMap); }, {col: C.li}); y += gap;
-      btn(this, "NEW DESCENT", bx, y, bw, 11, () => this.confirmNew(), {col: this.newArmed && T - this.newArmed < 3 ? C.rd : C.wh}); y += gap;
-    } else { btn(this, "DESCENT", bx, y, bw, 11, beginDescent, {col: C.li}); y += gap; }
-    const dd = dailyToday();
-    btn(this, "DAILY RUN" + (dd && dd.done ? "  ~  DONE" : this.saved && this.saved.daily ? "  ~  ON" : ""), bx, y, bw, 11, () => go(DailyScene), {col: C.pk}); y += gap;
-    const due = dueTapes().length;
-    btn(this, "THE BACK ROOM", bx, y, bw, 11, () => go(HubScene), {col: C.or});
-    if (due && Math.floor(T * 2) % 2) txt("!", bx + bw - 10, y + 3, this.items.length - 1 === this.sel ? C.k : C.pk);
-    y += gap;
     const tutY = y;
-    btn(this, "TRAINING", bx, y, bw, 11, () => go(TrainingScene), {col: C.bl}); y += gap;
-    btn(this, "SETTINGS", bx, y, bw, 11, () => go(SettingsScene), {col: C.lg, dim: C.nv}); y += gap;
-    if (window.rpQuit) btn(this, "QUIT", bx, y, bw, 11, powerOff, {col: C.gy, dim: C.nv});
+    btn(this, "GAME MODES" + (sv ? "  ~  RUN SAVED" : ""), bx, y, bw, 12, () => go(ModesScene), {col: C.li}); y += gap;
+    const due = dueTapes().length;
+    btn(this, "THE BACK ROOM", bx, y, bw, 12, () => go(HubScene), {col: C.or});
+    if (due && Math.floor(T * 2) % 2) txt("!", bx + bw - 10, y + 4, this.items.length - 1 === this.sel ? C.k : C.pk);
+    y += gap;
+    btn(this, "SETTINGS", bx, y, bw, 12, () => go(SettingsScene), {col: C.lg, dim: C.nv}); y += gap;
+    if (window.rpQuit) btn(this, "QUIT", bx, y, bw, 12, powerOff, {col: C.gy, dim: C.nv});
     endItems(this);
-    if (!meta.tutorialDone && !meta.stats.runs && !meta.arcade.length && Math.floor(T * 2) % 2) txt("< NEW HERE? START HERE", bx + bw + 6, tutY + 3, C.bl);
-    if (this.newArmed && T - this.newArmed < 3) txt("THIS ABANDONS YOUR RUN. PRESS AGAIN.", W / 2, 206, C.rd, 1, "c");
+    if (!meta.tutorialDone && !meta.stats.runs && !meta.arcade.length && Math.floor(T * 2) % 2) txt("< NEW? TRAINING IS IN HERE", bx + bw + 6, tutY + 4, C.bl);
 
     // side info
     txt("TOKENS", 12, 90, C.gy); txt("@" + meta.tokens, 12, 97, C.or);
@@ -175,18 +170,13 @@ const TitleScene = {
     txt("FRAGMENTS", 12, 134, C.gy);
     meta.fragments.forEach((f, i) => txt(f ? "@" : "~", 12 + i * 6, 141, f ? C.pk : C.gy));
     txt("DEEPEST", 12, 156, C.gy); txt(meta.stats.bestDepth ? "DEPTH " + meta.stats.bestDepth : "-", 12, 163, C.wh);
-    if (!(this.newArmed && T - this.newArmed < 3) && allFragments() && !meta.secrets.echo && Math.floor(T * 2) % 2) txt("THE SIGNAL IS COMPLETE", W / 2, 206, C.pk, 1, "c");
+    if (allFragments() && !meta.secrets.echo && Math.floor(T * 2) % 2) txt("THE SIGNAL IS COMPLETE", W / 2, 206, C.pk, 1, "c");
     txt("TROPHIES", 12, 178, C.gy); txt(achCount() + "/" + ACH.length, 12, 185, C.ye);
+    const DD = DIFFS[diffLevel()];
+    txt("DIFFICULTY", 12, 200, C.gy); txt(DD.n, 12, 207, DD.col);
     txt(ctl("WASD MOVE  ~  MOUSE AIM  ~  SPACE PULSE  ~  SHIFT DASH", "L-STICK MOVE  ~  R-STICK AIM  ~  RT PULSE  ~  LT DASH", "LEFT THUMB MOVES  ~  RIGHT THUMB AIMS  ~  PULSE / DASH BUTTONS"), W / 2, 224, C.gy, 1, "c");
     txt("V" + VERSION, W - 6, 224, C.nv, 1, "r");
   }
-};
-TitleScene.confirmNew = function () {
-  if (this.newArmed && T - this.newArmed < 3) {
-    this.newArmed = 0;
-    run = this.saved; if (run) endRun("dead");
-    this.saved = null; beginDescent();
-  } else { this.newArmed = T; sfx.deny(); fxWobble(0.3); }
 };
 function beginDescent() {
   const owned = Object.keys(SHIELDS).filter(k => meta.shields[k]);
@@ -253,14 +243,19 @@ function arcadeQualifies(s) { return s > 0 && (meta.arcade.length < 10 || s > me
 const ArcadeOver = {
   back() { go(TitleScene); },
   enter() {
-    this.res = {score: G.score, wave: G.wave, chain: G.bestChain, perf: G.perfects}; music("map");
+    const D = DIFFS[G.dl != null ? G.dl : DIFF_NORMAL];
+    this.res = {score: Math.round(G.score * D.score), raw: G.score, dl: G.dl != null ? G.dl : DIFF_NORMAL, wave: G.wave, chain: G.bestChain, perf: G.perfects}; music("map");
     const ph = phantomEntry();
     if (ph && !ph.ghost2 && this.res.score > ph.s && meta.milo !== "stay" && haunted(2)) setTimeout(() => whisper("HE DIDN'T LIKE THAT"), 1200);
     const r = this.res;
     meta.stats.bestWave = Math.max(meta.stats.bestWave || 0, r.wave);
     meta.stats.arcadeGames = (meta.stats.arcadeGames || 0) + 1;
     this.newBest = r.score > 0 && r.score > (meta.stats.bestScore || 0);
-    if (this.newBest) { meta.stats.bestScore = r.score; meta.stats.bestScoreWave = r.wave; }
+    if (this.newBest) {
+      meta.stats.bestScore = r.score; meta.stats.bestScoreWave = r.wave;
+      // the stats behind it travel with the score, so the online boards can check it adds up
+      meta.stats.bestRun = {s: r.score, w: r.wave, k: G.kills | 0, c: G.bestChain | 0, p: G.perfects | 0, r: G.parries | 0, t: Math.round(G.t || 0), d: r.dl};
+    }
     // the cabinet's top 10 fills itself in with the player's initials: no typing after every game
     this.entry = null;
     if (arcadeQualifies(r.score)) {
@@ -277,7 +272,9 @@ const ArcadeOver = {
     menuBg();
     title("GAME OVER", 40, C.rd);
     const r = this.res;
-    const rows = [["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain], ["PERFECTS", r.perf]];
+    const D = DIFFS[r.dl];
+    const rows = r.dl === DIFF_NORMAL ? [["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain], ["PERFECTS", r.perf]]
+      : [["POINTS", r.raw], [D.n, scoreMulText(D)], ["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain]];
     rows.forEach((row, i) => { txt(row[0], W / 2 - 60, 74 + i * 12, C.gy); txt(String(row[1]), W / 2 + 60, 74 + i * 12, C.wh, 1, "r"); });
     txt("PLAYER: " + (typeof myName === "function" ? myName() : meta.initials), W / 2, 60, C.gy, 1, "c");
     if ((this.newBest || this.entry) && Math.floor(T * 2) % 2) txt(this.newBest ? "NEW PERSONAL BEST!" : "YOU MADE THE TOP 10", W / 2, 130, this.newBest ? C.ye : C.bl, 1, "c");
@@ -291,6 +288,7 @@ const ArcadeOver = {
   }
 };
 const TIPS_ARCADE = ["CATCH LATE, ON THE INNER LINE, FOR A PERFECT.", "A KILLING SHOT KEEPS GOING. LINE THEM UP.",
+  "THE CORNERS ARE LIVE. DON'T HIDE IN THEM.", "CROWD A GUARDIAN AND IT SHOVES BACK. DASH OUT WHEN THE RING CLOSES.",
   "AMBER PLATES THROW YOUR SHOTS BACK. WAIT FOR THE GAP.", "RETURNED SHOTS BOUNCE OFF A WALL ONCE.",
   "PULSE CATCHES EVERYTHING CLOSE AT ONCE.", "PURPLE LINES MEAN A SHOT IS COMING. GOOD."];
 function pick0(a, i) { return a[Math.abs(i) % a.length]; }

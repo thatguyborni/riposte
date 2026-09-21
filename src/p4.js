@@ -66,7 +66,7 @@ function waveLogic(dt) {
     G.wave++;
     G.spawnQ = arcadeComp(G.wave);
     G.waveT = 0.35;
-    G.diff = 1 + G.wave * 0.026;
+    G.diff = (1 + G.wave * 0.026) * DLV().diff;
     if (G.mode === "arcade" && G.wave % 5 !== 0) { banner("WAVE " + G.wave, C.bl, 1.1); sfx.wave(); }
   }
 }
@@ -188,6 +188,7 @@ function combatStep(dt) {
         const mx = clamp(2 * ACX - p.x, AX0 + 14, AX1 - 14), my = clamp(2 * ACY - p.y, AY0 + 14, AY1 - 14);
         tvx = clamp((mx - f.x) * 2.2, -150, 150); tvy = clamp((my - f.y) * 2.2, -150, 150);
       }
+      else { const tv = [tvx, tvy]; steerFoe(f, base, p, dist, tv); tvx = tv[0]; tvy = tv[1]; }   // off the walls, out of corners
       if (base.boss && f.born < 1.4) { tvx = (ACX - f.x) * 1.2; tvy = (70 - f.y) * 1.6; }
       f.vx += (tvx - f.vx) * Math.min(1, dt * 2.4);
       f.vy += (tvy - f.vy) * Math.min(1, dt * 2.4);
@@ -198,6 +199,8 @@ function combatStep(dt) {
     }
     f.x += f.vx * dt * fslow; f.y += f.vy * dt * fslow;
     if (f.born > 1.5) { f.x = clamp(f.x, AX0 + 6, AX1 - 6); f.y = clamp(f.y, AY0 + 6, AY1 - 6); }
+    foeDefense(f, base, p, dist, dt * fslow);
+    if (!G.foes.includes(f)) continue;
 
     if (f.type !== "rusher" && f.born > (base.boss ? 1.4 : 0.6) && !G.over) foeFire(f, dt * fslow, diff);
 
@@ -206,6 +209,8 @@ function combatStep(dt) {
       if (f.type === "rusher" || f.type === "hollow") { burst(f.x, f.y, 16, f.type === "hollow" ? C.gy : C.rd, 96, 0.5); G.foes.splice(i, 1); continue; }
     }
   }
+
+  cornerHazard(p, dt);
 
   /* ---- coins ---- */
   for (let i = G.coins.length - 1; i >= 0; i--) {

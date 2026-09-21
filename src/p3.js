@@ -40,6 +40,10 @@ function newCombat(o) {
     over:false, won:false, endT:0, ended:false, endFired:false, onEnd:o.onEnd, paused:false,
     runPerf: o.runPerf || 0, banner:null, bossName:null, touch:false
   };
+  // difficulty: faster, tougher enemies (or gentler ones), and in the arcade more or fewer lives
+  G.dl = fightDiff(o.mode);
+  G.diff *= DIFFS[G.dl].diff;
+  if (o.mode === "arcade") G.lives = G.maxLives = Math.max(1, G.lives + DIFFS[G.dl].lives);
   return G;
 }
 function banner(text, col, t) { G.banner = {text: normText(text), col: col || C.wh, t: t || 1.6, max: t || 1.6}; }
@@ -70,6 +74,7 @@ function spawnFoe(type, at) {
     fxGlitch(0.6); fxRoll();
     sfx.boss();
   }
+  if (G.dl != null && G.dl !== DIFF_NORMAL && type !== "mine" && !f.dormant) f.hp = f.maxhp = Math.max(1, Math.round(f.hp * DIFFS[G.dl].hp));
   G.foes.push(f);
   return f;
 }
@@ -125,7 +130,7 @@ function dropCoins(x, y, n) {
 }
 
 /* ---------------- core helpers ---------------- */
-function curArc() { return G.S.arc * (G.buff === "wide" ? 1.5 : 1); }
+function curArc() { return G.S.arc * (G.buff === "wide" ? 1.5 : 1) * DLV().arc; }
 function plateBlocks(f, hitAng) {
   if (G.S.phase) return false;
   let n = 0, arc = 0;

@@ -103,8 +103,8 @@ const NameScene = {
     }
     if (this.change) btn(this, "CANCEL", W / 2 - 80, y, 160, 12, () => this.back(), {col: C.gy});
     endItems(this);
-    const foot = gjUser() ? "LOGGED IN TO GAMEJOLT AS " + normText(gjUser().user) + ". SCORES AND TROPHIES GO TO YOUR ACCOUNT."
-      : gjReady() ? "OPTIONAL: LOG IN WITH GAMEJOLT TO KEEP YOUR SCORES ON YOUR ACCOUNT AND EARN TROPHIES." : "";
+    const foot = gjUser() ? "LOGGED IN TO GAMEJOLT AS " + normText(gjUser().user) + ". SCORES, TROPHIES AND YOUR SAVE GO TO YOUR ACCOUNT."
+      : gjReady() ? "OPTIONAL: LOG IN WITH GAMEJOLT TO EARN TROPHIES AND CARRY YOUR SAVE BETWEEN DEVICES." : "";
     wrap(foot, 300).forEach((l, i) => txt(l, W / 2, 188 + i * 9, C.la, 1, "c"));
     txt("YOU CAN CHANGE IT ANY TIME IN RECORDS > ONLINE.", W / 2, 214, C.gy, 1, "c");
   },
@@ -148,13 +148,14 @@ const NameScene = {
 function gjIdent() { const u = gjUser(); return u ? "u:" + String(u.user).toLowerCase() : "g:" + meta.pid; }
 let gjSyncBusy = false;
 function gjSyncBest(loud) {
-  const best = meta.stats.bestScore || 0;
-  if (!gjReady() || !GJ.tables.arcade || !meta.name || best <= 0 || gjSyncBusy) return;
+  const best = meta.stats.bestScore || 0, run = meta.stats.bestRun;
+  // a best from before scores carried their stats can't be checked, so it stays where it already is
+  if (!gjReady() || !GJ.tables.arcade || !meta.name || best <= 0 || gjSyncBusy || !run || run.s !== best) return;
   if (!meta.sent || typeof meta.sent !== "object") meta.sent = {};
   const k = gjIdent() + "|arcade";
   if ((meta.sent[k] || 0) >= best) return;
   gjSyncBusy = true;
-  gjArcadeScore(best, meta.stats.bestScoreWave || 0).then(ok => {
+  gjArcadeScore(run).then(ok => {
     gjSyncBusy = false;
     if (!ok) return;                     // offline: the next check tries again
     meta.sent[k] = best; saveMeta();
@@ -184,6 +185,7 @@ function onlineTick(dt) {
   if (T - lastInput < 60 && !document.hidden) meta.stats.activeTime = (meta.stats.activeTime || 0) + dt;
   ONLINE.pushT -= dt;
   if (ONLINE.pushT <= 0) { ONLINE.pushT = 300; playerPush(); gjSyncBest(); }
+  cloudTick();
 }
 function onlineEvent() { playerPush(); gjSyncBest(); }
 
@@ -221,7 +223,7 @@ function fetchPlayers(force) {
       if (!it.x || String(it.x.success) !== "true") continue;
       try {
         const d = JSON.parse(it.x.data);
-        if (d && d.n) list.push({key: it.k, n: cleanName(d.n) || "?", u: d.u || "", g: (+d.g || 0) + (+d.r || 0),
+        if (playerRecordOk(d)) list.push({key: it.k, n: cleanName(d.n) || "?", u: d.u || "", g: (+d.g || 0) + (+d.r || 0),
           t: +d.t || 0, b: +d.b || 0, l: +d.l || 0, me: it.k === "p_" + meta.pid});
       } catch (e) {}
     }

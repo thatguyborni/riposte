@@ -182,7 +182,7 @@ window.addEventListener("keyup", e => { if (e && typeof e.key === "string") keys
 window.addEventListener("blur", () => { for (const k in keys) keys[k] = false; if (inCombat() && G && !G.over) G.paused = true; });
 
 screenCv.addEventListener("pointermove", e => {
-  if (e.pointerType === "touch") { if (touchCombatOn()) { touchMove(e); return; } }
+  if (e.pointerType === "touch") { if (touchMode()) { touchMove(e); return; } }
   const p = toLo(e);
   if (Math.abs(p.x - mouse.x) + Math.abs(p.y - mouse.y) > 2) { lastInput = T; PAD.useAim = false; }
   mouse.x = p.x; mouse.y = p.y;
@@ -195,7 +195,8 @@ screenCv.addEventListener("pointerdown", e => {
   if (G) G.touch = lastPointerTouch;
   if (lastPointerTouch) touchFirstGesture();
   // thumbs in a fight: sticks and buttons
-  if (lastPointerTouch && touchCombatOn()) { touchDown(e); return; }
+  const tm = lastPointerTouch ? touchMode() : null;
+  if (tm) { touchDown(e, tm); return; }
   const p = toLo(e); mouse.x = p.x; mouse.y = p.y;
   if (inCombat() && G && !G.paused) { if (e.button === 2) doPulse(); return; }
   if (scene && scene.click && scene.click(p.x, p.y)) return;
@@ -257,7 +258,7 @@ function frame(now) {
 let updatePending = false, updateNoticed = false;
 function safeToReload() {
   return !modalOpen && [TitleScene, RunMap, WorkshopScene, RecordsScene, ArcadeOver, ShieldSelect, RunOver,
-    HubScene, CodexScene, HistoryScene, OnlineScene, DailyScene, SettingsScene, PlayersScene].includes(scene);
+    HubScene, CodexScene, HistoryScene, OnlineScene, DailyScene, SettingsScene, PlayersScene, ModesScene].includes(scene);
 }
 function applyUpdate() {
   updatePending = false;

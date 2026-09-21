@@ -2,6 +2,7 @@
    Settings
    ================================================================ */
 const SETTING_ROWS = [
+  {k: "diff",    n: "DIFFICULTY",      type: "lvl", opts: ["VERY EASY", "EASY", "NORMAL", "HARD", "VERY HARD"], hidden: () => inCombat()},
   {k: "vol",     n: "MASTER VOLUME",   type: "num", min: 0, max: 10},
   {k: "musVol",  n: "MUSIC VOLUME",    type: "num", min: 0, max: 10},
   {k: "sfxVol",  n: "EFFECTS VOLUME",  type: "num", min: 0, max: 10},
@@ -23,12 +24,14 @@ function settingValue(r) {
   const v = meta.settings[r.k];
   if (r.type === "num") { const n = v == null ? 8 : v; return "[" + "|".repeat(n) + ".".repeat(r.max - n) + "] " + n; }
   if (r.type === "bool") return v === false ? "OFF" : "ON";
+  if (r.type === "lvl") { const n = v == null ? 2 : v; return "[" + "|".repeat(n + 1) + ".".repeat(r.opts.length - n - 1) + "] " + r.opts[n]; }
   if (r.k === "haunt" && v == null) return r.opts[2];
   return r.opts[v == null ? 0 : v] || r.opts[0];
 }
 function changeSetting(r, dir) {
   const s = meta.settings;
   if (r.type === "num") s[r.k] = clamp((s[r.k] == null ? 8 : s[r.k]) + dir, r.min, r.max);
+  else if (r.type === "lvl") s[r.k] = clamp((s[r.k] == null ? 2 : s[r.k]) + dir, 0, r.opts.length - 1);
   else if (r.type === "bool") s[r.k] = s[r.k] === false;
   else { const n = r.opts.length, cur = s[r.k] == null ? (r.k === "haunt" ? 2 : 0) : s[r.k]; s[r.k] = ((cur + dir) % n + n) % n; }
   applyVolumes(); saveMeta();
@@ -37,17 +40,18 @@ function changeSetting(r, dir) {
   if (r.k === "rumble" && s.rumble) padRumble(0.6, 0.4, 150);
 }
 // more rows (phones get a few extra) squeeze a little closer so everything still fits
-const settingGap = () => visibleSettings().length > 12 ? Math.max(13, Math.floor(184 / visibleSettings().length)) : 15;
+const settingGap = () => visibleSettings().length > 12 ? Math.max(11, Math.floor(184 / visibleSettings().length)) : 15;
 function settingsEnd(y0) { return y0 + visibleSettings().length * settingGap() + 4; }
 function drawSettingRows(sc, y0) {
   const gap = settingGap();
   visibleSettings().forEach((r, i) => {
     const y = y0 + i * gap;
     // clicking the left half of a number row turns it down, the right half turns it up
-    const s = btn(sc, null, 44, y, 296, 12, () => changeSetting(r, r.type === "num" && menuClickX != null && menuClickX < 192 ? -1 : 1), {col: C.wh, dim: C.nv});
+    const bar = r.type === "num" || r.type === "lvl";
+    const s = btn(sc, null, 44, y, 296, Math.min(12, gap - 1), () => changeSetting(r, bar && menuClickX != null && menuClickX < 192 ? -1 : 1), {col: C.wh, dim: C.nv});
     txt(r.n, 50, y + 4, s ? C.k : C.lg);
     txt((s ? "< " : "") + settingValue(r) + (s ? " >" : ""), 334, y + 4, s ? C.k : C.bl, 1, "r");
-    if (r.type === "num" && isTouch()) { txt("-", 38, y + 4, C.gy, 1, "c"); txt("+", 346, y + 4, C.gy, 1, "c"); }
+    if (bar && isTouch()) { txt("-", 38, y + 4, C.gy, 1, "c"); txt("+", 346, y + 4, C.gy, 1, "c"); }
   });
 }
 const settingsHint = () => ctl("LEFT / RIGHT TO CHANGE  ~  ESC TO GO BACK", "LEFT / RIGHT TO CHANGE  ~  B TO GO BACK", "TAP A ROW TO CHANGE IT  ~  LEFT HALF OF A BAR TURNS IT DOWN");

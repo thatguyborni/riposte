@@ -1,5 +1,5 @@
 "use strict";
-const VERSION = "4.3.0";
+const VERSION = "4.6.0";
 /* ================================================================
    RIPOSTE v3 — core: screen, font, sprites, audio, save
    ================================================================ */
@@ -628,14 +628,14 @@ function freshMeta() {
     fragments: [false, false, false, false, false],
     secrets: {vault1:false, vault2:false, vault3:false, untouched:false, static:false, mirror:false, signal:false, echo:false},
     stats: {runs:0, wins:0, bestDepth:0, kills:0, perfects:0, trueEnd:0, mines:0, bestWave:0,
-      arcadeGames:0, dailies:0, bestScore:0, bestScoreWave:0, activeTime:0},
-    arcade: [], initials: "AAA", name: "", pid: "", sent: {},
+      arcadeGames:0, dailies:0, bestScore:0, bestScoreWave:0, activeTime:0, bestRun:null},
+    arcade: [], initials: "AAA", name: "", pid: "", sent: {}, saveT: 0, cloud: {},
     seen: {}, ach: {}, history: [], npcs: {}, asc: 0, daily: null, dailyBest: 0, dailyFriends: [],
     synSeen: {}, modsSeen: {}, tutorialDone: false, hubSeen: false, gj: null, migr4: false,
     logs: {}, tapesDue: {}, flags: {}, playTime: 0, hauntSeen: false, milo: "",
     settings: {sound: 2, crt: true, fullscreen: false, vol: 8, musVol: 8, sfxVol: 8, curve: 2, tint: 0,
       phosphor: true, shake: true, effects: 2, rumble: true, haunt: 2,
-      taim: 0, tsize: 1, tfs: true}
+      taim: 0, tsize: 1, tfs: true, diff: 2}
   };
 }
 function mergeDeep(base, over) {
@@ -686,7 +686,8 @@ function migrate4(m) {
   if (bw >= 10) ach.wave10 = now;
   if (bw >= 20) ach.wave20 = now;
 }
-function saveMeta() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(meta)); } catch (e) {} }
+let NO_SAVE = false;   // set while another device's save is being loaded, so nothing writes the old one back
+function saveMeta() { if (NO_SAVE) return; meta.saveT = Date.now(); try { localStorage.setItem(SAVE_KEY, JSON.stringify(meta)); } catch (e) {} }
 let meta = loadMeta();
 
 function hash(str) {

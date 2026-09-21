@@ -45,8 +45,11 @@ function touchLayout() {
                    : {id: "dash", x: px - B * 1.02, y: py - B * 0.5, r: B * 0.4, label: "DASH", col: C.li};
   const ps = B * 0.46;
   const pause = {id: "pause", x: inR ? w - SAFE.r - rFree / 2 : w - SAFE.r - m - ps / 2, y: SAFE.t + m + ps / 2, r: ps / 2, label: "", col: C.lg};
+  // walking around (the back room): USE where PULSE sits, EXIT where pause sits
+  const use = {id: "use", x: pulse.x, y: pulse.y, r: pulse.r, label: "USE", col: C.ye};
+  const exit = {id: "exit", x: pause.x, y: pause.y, r: pause.r, label: "", col: C.lg};
   const R = clamp(Math.min(w, h) * 0.13, 38, 70) * big;             // stick radius
-  TLO = {w, h, B, m, R, gutter, buttons: [pulse, dash, pause], split: w * 0.45,
+  TLO = {w, h, B, m, R, gutter, buttons: [pulse, dash, pause], walkButtons: [use, exit], split: w * 0.45,
     moveHint: {x: lFree >= R * 2 + 8 ? SAFE.l + lFree / 2 : SAFE.l + m + R, y: h - SAFE.b - m - R},
     aimHint: {x: Math.min(px - B * 1.9, w * 0.72), y: h - SAFE.b - m - R}};
   TLO_KEY = key;
@@ -59,18 +62,31 @@ function tPos(e) { const r = screenCv.getBoundingClientRect(); return {x: e.clie
 function touchCombatOn() {
   return isTouch() && inCombat() && G && !G.paused && !G.over && G.mode !== "attract" && !portraitBlocked();
 }
+// rooms you walk around in (the back room): a stick, USE and EXIT
+function touchWalkOn() {
+  return isTouch() && scene && scene.walk && !scene.count && !modalOpen && !portraitBlocked();
+}
+function touchMode() { return touchCombatOn() ? "fight" : touchWalkOn() ? "walk" : null; }
+function touchButtons(mode) { const Lo = touchLayout(); return mode === "walk" ? Lo.walkButtons : Lo.buttons; }
 function touchButtonAct(id) {
   if (id === "pulse") doPulse();
   else if (id === "dash") doDash();
   else if (id === "pause") dispatchKey("p");
+  else if (id === "use") dispatchKey("enter");
+  else if (id === "exit") { if (scene && scene.back) scene.back(); }
 }
-function touchDown(e) {
+function touchDown(e, mode) {
   const p = tPos(e), Lo = touchLayout();
   try { screenCv.setPointerCapture(e.pointerId); } catch (er) {}
-  for (const b of Lo.buttons) {
+  for (const b of touchButtons(mode)) {
     if (Math.hypot(p.x - b.x, p.y - b.y) <= b.r + Lo.m * 0.6) {
       TCH.btn[e.pointerId] = b.id; TCH.press[b.id] = T; buzz(8); touchButtonAct(b.id); return;
     }
+  }
+  if (mode === "walk") {
+    // drag anywhere to walk; a tap without dragging walks over to what you tapped (and uses it)
+    if (!TCH.move) TCH.move = {id: e.pointerId, ox: p.x, oy: p.y, x: p.x, y: p.y, walk: true, moved: 0, lo: toLo(e)};
+    return;
   }
   if (p.x < Lo.split) { if (!TCH.move) { TCH.move = {id: e.pointerId, ox: p.x, oy: p.y, x: p.x, y: p.y}; TCH.usedMove = true; } }
   else if (!TCH.aim) { TCH.aim = {id: e.pointerId, ox: p.x, oy: p.y, x: p.x, y: p.y, t0: T, moved: 0}; }
@@ -82,14 +98,19 @@ function touchMove(e) {
     if (!s || s.id !== e.pointerId) continue;
     s.x = p.x; s.y = p.y;
     const dx = s.x - s.ox, dy = s.y - s.oy, d = Math.hypot(dx, dy);
+    if (s.walk || s === TCH.aim) s.moved = Math.max(s.moved, d);
     if (s === TCH.move && d > R) { s.ox = s.x - dx / d * R; s.oy = s.y - dy / d * R; }   // the stick follows a wandering thumb
-    if (s === TCH.aim) s.moved = Math.max(s.moved, d);
   }
   sticks();
 }
 function touchUp(e) {
   if (TCH.btn[e.pointerId]) { delete TCH.btn[e.pointerId]; return; }
-  if (TCH.move && TCH.move.id === e.pointerId) TCH.move = null;
+  if (TCH.move && TCH.move.id === e.pointerId) {
+    const s = TCH.move; TCH.move = null;
+    if (s.walk && s.moved < 12 && e.type === "pointerup" && scene && touchWalkOn()) {
+      if (scene.click) scene.click(s.lo.x, s.lo.y);
+    }
+  }
   if (TCH.aim && TCH.aim.id === e.pointerId) {
     const a = TCH.aim; TCH.aim = null;
     if (e.type === "pointerup" && a.moved < 9 && T - a.t0 < 0.25 && touchCombatOn()) doPulse();   // a quick tap on the right side pulses too
@@ -99,7 +120,7 @@ function touchUp(e) {
 function touchReset() { TCH.move = TCH.aim = null; TCH.btn = {}; TCH.mx = TCH.my = 0; }
 function sticks() {
   const R = touchLayout().R;
-  if (TCH.move) {
+  if (TCH.move && !(TCH.move.walk && TCH.move.moved < 12)) {
     let dx = (TCH.move.x - TCH.move.ox) / R, dy = (TCH.move.y - TCH.move.oy) / R;
     const m = Math.hypot(dx, dy);
     if (m < 0.14) dx = dy = 0; else if (m > 1) { dx /= m; dy /= m; }
@@ -135,10 +156,12 @@ function hexA(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return "rgba(" + (n >> 16 & 255) + "," + (n >> 8 & 255) + "," + (n & 255) + "," + a + ")";
 }
+let tuiMode = null;
 function drawTouchUI() {
   if (!tctx) return;
-  if (!touchCombatOn()) {
-    touchReset();
+  const mode = touchMode();
+  if (mode !== tuiMode) { touchReset(); tuiMode = mode; }
+  if (!mode) {
     if (tuiDirty) { tctx.setTransform(1, 0, 0, 1, 0, 0); tctx.clearRect(0, 0, tuiCv.width, tuiCv.height); tuiDirty = false; }
     return;
   }
@@ -146,6 +169,7 @@ function drawTouchUI() {
   const cw = Math.round(Lo.w * d), ch = Math.round(Lo.h * d);
   if (tuiCv.width !== cw || tuiCv.height !== ch) { tuiCv.width = cw; tuiCv.height = ch; }
   tctx.setTransform(d, 0, 0, d, 0, 0); tctx.clearRect(0, 0, Lo.w, Lo.h); tuiDirty = true;
+  if (mode === "walk") { drawWalkUI(Lo); return; }
   const p = G.p, R = Lo.R;
   // move stick
   if (TCH.move) {
@@ -190,6 +214,25 @@ function drawTouchUI() {
   }
 }
 
+function drawWalkUI(Lo) {
+  const R = Lo.R, s = TCH.move;
+  if (s && s.moved >= 12) {
+    tCircle(s.ox, s.oy, R, "rgba(5,6,12,0.28)", "rgba(255,241,232,0.35)", 2);
+    tCircle(s.ox + TCH.mx * R, s.oy + TCH.my * R, R * 0.42, hexA(C.bl, 0.55), hexA(C.bl, 0.9), 2);
+  }
+  // USE lights up when there's something to use (or someone talking)
+  const canUse = !!(scene.dialog || (scene.nearest && scene.nearest()));
+  for (const b of Lo.walkButtons) {
+    const down = T - (TCH.press[b.id] || -9) < 0.12, on = b.id !== "use" || canUse;
+    tCircle(b.x, b.y, b.r, down ? hexA(b.col, 0.55) : "rgba(5,6,12,0.42)", hexA(on ? b.col : C.gy, on ? 0.85 : 0.5), 2.5);
+    if (b.id === "exit") {                            // an X
+      const k = b.r * 0.38;
+      tctx.lineWidth = 3; tctx.strokeStyle = "rgba(255,241,232,0.85)";
+      tctx.beginPath(); tctx.moveTo(b.x - k, b.y - k); tctx.lineTo(b.x + k, b.y + k); tctx.moveTo(b.x + k, b.y - k); tctx.lineTo(b.x - k, b.y + k); tctx.stroke();
+    } else tText(scene.dialog ? "OK" : b.label, b.x, b.y, Math.max(8, b.r * 0.3), hexA(on ? b.col : C.gy, on ? 1 : 0.6));
+  }
+}
+
 /* ---------------- vibration (Android; iPhones don't allow it) ---------------- */
 function buzz(ms) {
   if (!isTouch() || meta.settings.rumble === false || !navigator.vibrate) return;
@@ -228,6 +271,7 @@ function onHidden() {
   if (inCombat() && G && !G.over && G.mode !== "attract") G.paused = true;
   touchReset();
   try { saveMeta(); if (typeof run !== "undefined" && run) saveRun(); } catch (e) {}
+  try { cloudFlush(); } catch (e) {}
   try { if (AC && AC.state === "running") AC.suspend(); } catch (e) {}
 }
 document.addEventListener("visibilitychange", () => {

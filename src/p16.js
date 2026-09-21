@@ -80,43 +80,49 @@ function gjLogin(user, token, quiet) {
     if (!quiet) toast("GAMEJOLT: LOGGED IN AS " + normText(user), C.li);
     // trophies earned while offline catch up now
     for (const id in meta.ach || {}) gjTrophy(id);
+    if (typeof cloudReset === "function") cloudReset();     // the save on this account gets checked next
     if (typeof onlineEvent === "function") onlineEvent();   // best score and player list follow the account
     return true;
   }).catch(e => { if (!quiet) toast("GAMEJOLT LOGIN FAILED", C.rd); return false; });
 }
-function gjLogout() { meta.gj = null; saveMeta(); toast("GAMEJOLT: LOGGED OUT", C.gy); }
+function gjLogout() { meta.gj = null; saveMeta(); if (typeof cloudReset === "function") cloudReset(); toast("GAMEJOLT: LOGGED OUT", C.gy); }
 
 function gjTrophy(id) {
   const u = gjUser(), tid = GJ.trophies[id];
   if (!u || !tid || !gjReady()) return;
   gjCall("trophies/add-achieved", {username: u.user, user_token: u.token, trophy_id: tid}).catch(() => {});
 }
+// extra(name) builds the stats + checksum for whoever the score goes up as
 function gjAddScore(table, score, label, extra, guest) {
   if (!gjReady() || !GJ.tables[table]) return Promise.resolve(false);
   const u = gjUser();
-  const p = {score: label, sort: score, table_id: GJ.tables[table], extra_data: extra || ""};
+  const p = {score: label, sort: score, table_id: GJ.tables[table]};
   if (u) { p.username = u.user; p.user_token = u.token; } else p.guest = guest || myName();
+  p.extra_data = extra ? extra(u ? u.user : p.guest) : "";
   return gjCall("scores/add", p).then(() => { GJ.board.t = 0; return true; }).catch(() => false);
 }
-function gjArcadeScore(score, wave, initials) { return gjAddScore("arcade", score, score + " PTS ~ WAVE " + wave, "w" + wave, initials); }
-function gjDailyScore(score) { return gjAddScore("daily", score, score + " PTS ~ " + todayStr(), todayStr()); }
-
-function gjRows(scores) {
-  return (scores || []).map(s => ({i: normText(String(s.user || s.guest || "?")).slice(0, 12), s: parseInt(s.sort, 10) || 0, x: s.extra_data || ""}));
+// r = {s: score, w: wave, k: kills, c: best chain, p: perfects, r: parries, t: seconds}
+function gjArcadeScore(r) { return gjAddScore("arcade", r.s, r.s + " PTS ~ WAVE " + r.w, n => arcadeExtra(r, n)); }
+function gjDailyScore(score, st) {
+  const d = Object.assign({date: todayStr()}, st || {});
+  return gjAddScore("daily", score, score + " PTS ~ " + d.date, n => dailyExtra(d, n, score));
 }
+
 function gjFetchBoards(force) {
   if (!gjReady() || (!force && performance.now() - GJ.board.t < 60000)) return;
   GJ.board.t = performance.now(); GJ.board.status = "LOADING...";
   const jobs = [];
-  if (GJ.tables.arcade) jobs.push(gjCall("scores", {table_id: GJ.tables.arcade, limit: 10}).then(r => { GJ.board.arcade = gjRows(r.scores); }));
-  if (GJ.tables.daily) jobs.push(gjCall("scores", {table_id: GJ.tables.daily, limit: 100}).then(r => { GJ.board.daily = gjRows(r.scores); }));
+  GJ.board.hidden = 0;
+  const take = (r, kind) => { const c = checkedRows(r.scores, kind); GJ.board.hidden += c.hidden; return c.rows; };
+  if (GJ.tables.arcade) jobs.push(gjCall("scores", {table_id: GJ.tables.arcade, limit: 50}).then(r => { GJ.board.arcade = take(r, "arcade").slice(0, 10); }));
+  if (GJ.tables.daily) jobs.push(gjCall("scores", {table_id: GJ.tables.daily, limit: 100}).then(r => { GJ.board.daily = take(r, "daily"); }));
   Promise.all(jobs).then(() => { GJ.board.status = ""; }).catch(() => { GJ.board.status = "COULDN'T REACH GAMEJOLT"; });
 }
 const gjFetchDaily = () => gjFetchBoards(false);
 function gjDailyRows() {
   if (!GJ.board.daily) return null;
   const d = todayStr();
-  return GJ.board.daily.filter(r => r.x === d).slice(0, 8);
+  return GJ.board.daily.filter(r => entryDate(r.x) === d).slice(0, 8);
 }
 
 function openGjLogin() {
@@ -153,12 +159,16 @@ const OnlineScene = {
         rows.slice(0, 10).forEach((r, i) => {
           const me = u && r.i === normText(u.user);
           txt(String(i + 1).padStart(2, " ") + ". " + r.i, x0, 56 + i * 12, me ? C.ye : C.wh);
+          const D = DIFFS[r.d == null ? DIFF_NORMAL : r.d];
+          if (D && D.tag) txt(D.tag, x0 + tw(String(i + 1).padStart(2, " ") + ". " + r.i) + 4, 56 + i * 12, D.col);
           txt(String(r.s), x1, 56 + i * 12, me ? C.ye : C.wh, 1, "r");
         });
       };
       drawRows(GJ.board.arcade, 16, 180);
       drawRows(gjDailyRows(), 204, 368);
       if (GJ.board.status) txt(GJ.board.status, W / 2, 192, C.gy, 1, "c");
+      else if (GJ.board.hidden) txt(GJ.board.hidden + (GJ.board.hidden === 1 ? " SCORE" : " SCORES") + " DIDN'T ADD UP AND ARE HIDDEN", W / 2, 192, C.gy, 1, "c");
+      else if (typeof cloudStatus === "function") txt(cloudStatus(), W / 2, 192, C.gy, 1, "c");
       btn(this, u ? "LOG OUT" : "LOG IN", 8, 204, 88, 12, () => u ? gjLogout() : openGjLogin(), {col: C.li});
       btn(this, "PLAYERS", 100, 204, 88, 12, () => go(PlayersScene), {col: C.ye});
       btn(this, "CHANGE NAME", 192, 204, 88, 12, () => go(NameScene, {change: true}), {col: C.pk});

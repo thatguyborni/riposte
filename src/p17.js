@@ -206,7 +206,7 @@ const TapeScene = {
     if (meta.tapesDue) delete meta.tapesDue[this.id];
     if (!meta.hauntSeen) meta.hauntSeen = true;
     saveMeta();
-    musTrack = null; this.click = 0;
+    musTrack = null; this.ticks = 0;
     tone(180, 0.08, "square", 0.1); noise(0.12, 0.12, 2000, 800);
     if (tapesRead() >= TAPE_COUNT) unlockAch("tapes");
   },
@@ -214,7 +214,7 @@ const TapeScene = {
     this.t += dt;
     const shown = Math.floor(this.t * 34);
     if (shown < this.text.length && Math.floor(this.t * 34) !== Math.floor((this.t - dt) * 34) && this.text[shown] !== " ") {
-      if (++this.click % 2) tone(1400 + rand() * 300, 0.012, "square", 0.025);
+      if (++this.ticks % 2) tone(1400 + rand() * 300, 0.012, "square", 0.025);
     }
     if (Math.floor(this.t * 2) !== Math.floor((this.t - dt) * 2)) noise(0.5, 0.018, 3000, 2500);   // tape hiss
   },
@@ -249,7 +249,7 @@ const TapeScene = {
       left -= l.length + 1;
     });
     if (!this.done() && Math.floor(this.t * 4) % 2) R(W - 30, 224, 5, 5, C.rd);
-    txt(this.done() ? "ANY KEY TO STOP THE TAPE" : "ANY KEY TO SKIP", W / 2, 226, C.gy, 1, "c");
+    txt(this.done() ? ctl("ANY KEY TO STOP THE TAPE", "ANY BUTTON TO STOP THE TAPE", "TAP TO STOP THE TAPE") : ctl("ANY KEY TO SKIP", "ANY BUTTON TO SKIP", "TAP TO SKIP"), W / 2, 226, C.gy, 1, "c");
   }
 };
 
@@ -303,7 +303,7 @@ const CrashScene = {
       if (t > 0.8) {
         txt("RIPOSTE ARCADE SYSTEM", 24, 24, C.wh);
         const L2 = ["A FATAL EXCEPTION 0E HAS OCCURRED AT 0417:ECHO.", "", "THE CURRENT PLAYER COULD NOT BE REMOVED.",
-          "INPUT 2 IS ACTIVE. NO SECOND CONTROLLER IS CONNECTED.", "", "*  PRESS ANY KEY TO CONTINUE PLAYING.", "*  THERE IS NO OTHER OPTION."];
+          "INPUT 2 IS ACTIVE. NO SECOND CONTROLLER IS CONNECTED.", "", (isTouch() ? "*  TOUCH THE SCREEN TO CONTINUE PLAYING." : "*  PRESS ANY KEY TO CONTINUE PLAYING."), "*  THERE IS NO OTHER OPTION."];
         L2.forEach((l, i) => { if (t > 1 + i * 0.25) txt(l, 24, 48 + i * 10, C.wh); });
         if (Math.floor(t * 2) % 2) R(24, 128, 5, 7, C.wh);
       }

@@ -28,7 +28,7 @@ const HubScene = {
     this.fig = haunted(2) && meta.flags && meta.flags.crash1 ? FIG[Math.min(3, Math.max(0, h - 2))] : null;
     this.figGone = false; this.lightsT = 8 + rand() * 12; this.dark = 0; this.winT = 6 + rand() * 10; this.winFig = 0;
     music(meta.milo === "free" ? "map" : haunted(3) ? "basement" : "map");
-    if (!meta.hubSeen) { meta.hubSeen = true; saveMeta(); this.dialog = {who: null, text: "THE BACK ROOM. " + ctl("WALK UP TO THINGS AND PRESS ENTER.", "WALK UP TO THINGS AND PRESS A.", "TAP THINGS TO WALK OVER AND USE THEM.") + " EVERYTHING BEHIND THE CABINET LIVES HERE."}; }
+    if (!meta.hubSeen) { meta.hubSeen = true; saveMeta(); this.dialog = {who: null, text: "THE BACK ROOM. " + ctl("WALK UP TO THINGS AND PRESS ENTER.", "WALK UP TO THINGS AND PRESS A.", "DRAG ANYWHERE TO WALK. TAP THINGS (OR PRESS USE) TO USE THEM. THE X IN THE CORNER LEAVES.") + " EVERYTHING BEHIND THE CABINET LIVES HERE."}; }
   },
   back() { if (this.dialog) this.dialog = null; else go(TitleScene); },
   spots() {
@@ -102,6 +102,7 @@ const HubScene = {
     if (keys.s || keys.arrowdown) ay += 1;
     if (PAD.connected && (PAD.lx || PAD.ly)) { ax = PAD.lx; ay = PAD.ly; }
     if (PAD.connected && PAD.cur) { const c = PAD.cur; if (c.left) ax = -1; if (c.right) ax = 1; if (c.up) ay = -1; if (c.down) ay = 1; }
+    if (TCH.mx || TCH.my) { ax = TCH.mx; ay = TCH.my; }
     if (this.target) {
       const dx = this.target.x - this.px, dy = this.target.y - this.py, d = Math.hypot(dx, dy);
       if (ax || ay) this.target = null;
@@ -130,7 +131,11 @@ const HubScene = {
     if (this.dialog) { this.dialog = null; return true; }
     for (const s of this.spots()) {
       const [bx, by, bw, bh] = s.box;
-      if (x >= bx - 3 && x < bx + bw + 3 && y >= by - 3 && y < by + bh + 3) { this.target = s; return true; }
+      if (x >= bx - 3 && x < bx + bw + 3 && y >= by - 3 && y < by + bh + 3) {
+        // walk to the nearest reachable spot next to it, then use it
+        this.target = {x: clamp(s.x, 14, 370), y: clamp(s.y, 58, 216), act: s.act};
+        return true;
+      }
     }
     if (y > 50) { this.target = {x: clamp(x, 14, 370), y: clamp(y, 58, 216), act: () => {}}; }
     return true;
@@ -237,7 +242,7 @@ const HubScene = {
       const w = tw(s) + 14;
       panel(W / 2 - w / 2, 218, w, 12, C.gy);
       txt(s, W / 2, 222, C.wh, 1, "c");
-    } else txt(ctl("WASD / CLICK TO WALK  ~  ENTER TO USE  ~  ESC TO LEAVE", "STICK TO WALK  ~  A TO USE  ~  B TO LEAVE", "TAP SOMETHING TO WALK OVER AND USE IT  ~  THE DOOR LEADS OUT"), W / 2, 222, C.gy, 1, "c");
+    } else txt(ctl("WASD / CLICK TO WALK  ~  ENTER TO USE  ~  ESC TO LEAVE", "STICK TO WALK  ~  A TO USE  ~  B TO LEAVE", "DRAG TO WALK  ~  TAP THINGS OR PRESS USE  ~  X TO LEAVE"), W / 2, 222, C.gy, 1, "c");
   }
 };
 

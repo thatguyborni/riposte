@@ -113,7 +113,7 @@ const GJ_CFG = {
   }
 };
 "use strict";
-const VERSION = "4.3.0";
+const VERSION = "4.6.0";
 /* ================================================================
    RIPOSTE v3 — core: screen, font, sprites, audio, save
    ================================================================ */
@@ -742,14 +742,14 @@ function freshMeta() {
     fragments: [false, false, false, false, false],
     secrets: {vault1:false, vault2:false, vault3:false, untouched:false, static:false, mirror:false, signal:false, echo:false},
     stats: {runs:0, wins:0, bestDepth:0, kills:0, perfects:0, trueEnd:0, mines:0, bestWave:0,
-      arcadeGames:0, dailies:0, bestScore:0, bestScoreWave:0, activeTime:0},
-    arcade: [], initials: "AAA", name: "", pid: "", sent: {},
+      arcadeGames:0, dailies:0, bestScore:0, bestScoreWave:0, activeTime:0, bestRun:null},
+    arcade: [], initials: "AAA", name: "", pid: "", sent: {}, saveT: 0, cloud: {},
     seen: {}, ach: {}, history: [], npcs: {}, asc: 0, daily: null, dailyBest: 0, dailyFriends: [],
     synSeen: {}, modsSeen: {}, tutorialDone: false, hubSeen: false, gj: null, migr4: false,
     logs: {}, tapesDue: {}, flags: {}, playTime: 0, hauntSeen: false, milo: "",
     settings: {sound: 2, crt: true, fullscreen: false, vol: 8, musVol: 8, sfxVol: 8, curve: 2, tint: 0,
       phosphor: true, shake: true, effects: 2, rumble: true, haunt: 2,
-      taim: 0, tsize: 1, tfs: true}
+      taim: 0, tsize: 1, tfs: true, diff: 2}
   };
 }
 function mergeDeep(base, over) {
@@ -800,7 +800,8 @@ function migrate4(m) {
   if (bw >= 10) ach.wave10 = now;
   if (bw >= 20) ach.wave20 = now;
 }
-function saveMeta() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(meta)); } catch (e) {} }
+let NO_SAVE = false;   // set while another device's save is being loaded, so nothing writes the old one back
+function saveMeta() { if (NO_SAVE) return; meta.saveT = Date.now(); try { localStorage.setItem(SAVE_KEY, JSON.stringify(meta)); } catch (e) {} }
 let meta = loadMeta();
 
 function hash(str) {
@@ -910,6 +911,10 @@ function newCombat(o) {
     over:false, won:false, endT:0, ended:false, endFired:false, onEnd:o.onEnd, paused:false,
     runPerf: o.runPerf || 0, banner:null, bossName:null, touch:false
   };
+  // difficulty: faster, tougher enemies (or gentler ones), and in the arcade more or fewer lives
+  G.dl = fightDiff(o.mode);
+  G.diff *= DIFFS[G.dl].diff;
+  if (o.mode === "arcade") G.lives = G.maxLives = Math.max(1, G.lives + DIFFS[G.dl].lives);
   return G;
 }
 function banner(text, col, t) { G.banner = {text: normText(text), col: col || C.wh, t: t || 1.6, max: t || 1.6}; }
@@ -940,6 +945,7 @@ function spawnFoe(type, at) {
     fxGlitch(0.6); fxRoll();
     sfx.boss();
   }
+  if (G.dl != null && G.dl !== DIFF_NORMAL && type !== "mine" && !f.dormant) f.hp = f.maxhp = Math.max(1, Math.round(f.hp * DIFFS[G.dl].hp));
   G.foes.push(f);
   return f;
 }
@@ -995,7 +1001,7 @@ function dropCoins(x, y, n) {
 }
 
 /* ---------------- core helpers ---------------- */
-function curArc() { return G.S.arc * (G.buff === "wide" ? 1.5 : 1); }
+function curArc() { return G.S.arc * (G.buff === "wide" ? 1.5 : 1) * DLV().arc; }
 function plateBlocks(f, hitAng) {
   if (G.S.phase) return false;
   let n = 0, arc = 0;
@@ -1216,7 +1222,7 @@ function waveLogic(dt) {
     G.wave++;
     G.spawnQ = arcadeComp(G.wave);
     G.waveT = 0.35;
-    G.diff = 1 + G.wave * 0.026;
+    G.diff = (1 + G.wave * 0.026) * DLV().diff;
     if (G.mode === "arcade" && G.wave % 5 !== 0) { banner("WAVE " + G.wave, C.bl, 1.1); sfx.wave(); }
   }
 }
@@ -1338,6 +1344,7 @@ function combatStep(dt) {
         const mx = clamp(2 * ACX - p.x, AX0 + 14, AX1 - 14), my = clamp(2 * ACY - p.y, AY0 + 14, AY1 - 14);
         tvx = clamp((mx - f.x) * 2.2, -150, 150); tvy = clamp((my - f.y) * 2.2, -150, 150);
       }
+      else { const tv = [tvx, tvy]; steerFoe(f, base, p, dist, tv); tvx = tv[0]; tvy = tv[1]; }   // off the walls, out of corners
       if (base.boss && f.born < 1.4) { tvx = (ACX - f.x) * 1.2; tvy = (70 - f.y) * 1.6; }
       f.vx += (tvx - f.vx) * Math.min(1, dt * 2.4);
       f.vy += (tvy - f.vy) * Math.min(1, dt * 2.4);
@@ -1348,6 +1355,8 @@ function combatStep(dt) {
     }
     f.x += f.vx * dt * fslow; f.y += f.vy * dt * fslow;
     if (f.born > 1.5) { f.x = clamp(f.x, AX0 + 6, AX1 - 6); f.y = clamp(f.y, AY0 + 6, AY1 - 6); }
+    foeDefense(f, base, p, dist, dt * fslow);
+    if (!G.foes.includes(f)) continue;
 
     if (f.type !== "rusher" && f.born > (base.boss ? 1.4 : 0.6) && !G.over) foeFire(f, dt * fslow, diff);
 
@@ -1356,6 +1365,8 @@ function combatStep(dt) {
       if (f.type === "rusher" || f.type === "hollow") { burst(f.x, f.y, 16, f.type === "hollow" ? C.gy : C.rd, 96, 0.5); G.foes.splice(i, 1); continue; }
     }
   }
+
+  cornerHazard(p, dt);
 
   /* ---- coins ---- */
   for (let i = G.coins.length - 1; i >= 0; i--) {
@@ -1748,6 +1759,7 @@ function drawCombat(opts) {
   drawPlayer();
   L.restore();
   if (G.dark) drawDarkness();
+  drawDefenses();
   for (const f of G.floats) {
     if (f.life / f.max < 0.3 && Math.floor(f.life * 20) % 2) continue;
     txtS(f.t, f.x, f.y, f.col, 1, "c");
@@ -2012,8 +2024,9 @@ function startRun(shield, opts) {
     pendingId: null, runPerf: 0, fights: 0, curses: [], asc: opts.daily ? 0 : (opts.asc || 0),
     daily: opts.daily || null, seed: opts.daily ? "daily:" + opts.daily : null, rs: null, grades: {S: 0, A: 0, B: 0, C: 0}};
   if (run.seed) run.rs = seedNum(run.seed);
-  const lives = 3 + upgOn("plate") - (run.asc >= 2 ? 1 : 0);
-  run.lives = run.maxLives = lives;
+  run.dl = opts.daily ? DIFF_NORMAL : diffLevel();       // a descent keeps the difficulty it started with
+  const lives = 3 + upgOn("plate") - (run.asc >= 2 ? 1 : 0) + DIFFS[run.dl].lives;
+  run.lives = run.maxLives = Math.max(1, lives);
   run.coins = 30 * upgOn("change");
   if (shield === "glass") { run.lives = run.maxLives = 1; gainMod(rollMod("r")); }
   if (npcHere("pip") && !run.daily) {
@@ -2027,7 +2040,7 @@ function startRun(shield, opts) {
   run.map = genMap(1);
   saveRun();
 }
-function saveRun() { try { if (run) localStorage.setItem(RUN_KEY, JSON.stringify(run)); } catch (e) {} }
+function saveRun() { if (NO_SAVE) return; try { if (run) localStorage.setItem(RUN_KEY, JSON.stringify(run)); } catch (e) {} }
 function clearRun() { try { localStorage.removeItem(RUN_KEY); } catch (e) {} }
 function loadRun() {
   try {
@@ -2098,7 +2111,7 @@ function endRun(kind) {
     meta.dailyBest = Math.max(meta.dailyBest || 0, dailyScore);
     unlockAch("daily");
     meta.stats.dailies = (meta.stats.dailies || 0) + 1;
-    try { if (typeof gjDailyScore === "function") gjDailyScore(dailyScore); } catch (e) {}
+    try { if (typeof gjDailyScore === "function") gjDailyScore(dailyScore, {date: run.daily, d: run.depth, k: run.kills | 0, p: run.perfects | 0, b: run.bosses | 0, w: won ? 1 : 0, t: kind === "true" ? 1 : 0}); } catch (e) {}
   }
   if (!Array.isArray(meta.history)) meta.history = [];
   meta.history.unshift({d: Date.now(), k: kind, dp: run.depth, ki: run.kills, pf: run.perfects, sh: run.shield,
@@ -2316,27 +2329,22 @@ const TitleScene = {
     txt(sub, W / 2, 66, subCol, 1, "c");
 
     beginItems(this);
-    const bx = W / 2 - 55, bw = 110, gap = 14;
-    let y = 80;
-    btn(this, "ARCADE", bx, y, bw, 11, () => go(ArcadeScene)); y += gap;
+    const bx = W / 2 - 55, bw = 110;
+    const gap = 16;
+    let y = 86;
+    btn(this, "ARCADE", bx, y, bw, 12, () => go(ArcadeScene)); y += gap;
+    // descent, daily and training live in GAME MODES
     const sv = this.saved && !this.saved.daily ? this.saved : null;
-    if (sv) {
-      btn(this, "CONTINUE DESCENT", bx, y, bw, 11, () => { run = sv; go(RunMap); }, {col: C.li}); y += gap;
-      btn(this, "NEW DESCENT", bx, y, bw, 11, () => this.confirmNew(), {col: this.newArmed && T - this.newArmed < 3 ? C.rd : C.wh}); y += gap;
-    } else { btn(this, "DESCENT", bx, y, bw, 11, beginDescent, {col: C.li}); y += gap; }
-    const dd = dailyToday();
-    btn(this, "DAILY RUN" + (dd && dd.done ? "  ~  DONE" : this.saved && this.saved.daily ? "  ~  ON" : ""), bx, y, bw, 11, () => go(DailyScene), {col: C.pk}); y += gap;
-    const due = dueTapes().length;
-    btn(this, "THE BACK ROOM", bx, y, bw, 11, () => go(HubScene), {col: C.or});
-    if (due && Math.floor(T * 2) % 2) txt("!", bx + bw - 10, y + 3, this.items.length - 1 === this.sel ? C.k : C.pk);
-    y += gap;
     const tutY = y;
-    btn(this, "TRAINING", bx, y, bw, 11, () => go(TrainingScene), {col: C.bl}); y += gap;
-    btn(this, "SETTINGS", bx, y, bw, 11, () => go(SettingsScene), {col: C.lg, dim: C.nv}); y += gap;
-    if (window.rpQuit) btn(this, "QUIT", bx, y, bw, 11, powerOff, {col: C.gy, dim: C.nv});
+    btn(this, "GAME MODES" + (sv ? "  ~  RUN SAVED" : ""), bx, y, bw, 12, () => go(ModesScene), {col: C.li}); y += gap;
+    const due = dueTapes().length;
+    btn(this, "THE BACK ROOM", bx, y, bw, 12, () => go(HubScene), {col: C.or});
+    if (due && Math.floor(T * 2) % 2) txt("!", bx + bw - 10, y + 4, this.items.length - 1 === this.sel ? C.k : C.pk);
+    y += gap;
+    btn(this, "SETTINGS", bx, y, bw, 12, () => go(SettingsScene), {col: C.lg, dim: C.nv}); y += gap;
+    if (window.rpQuit) btn(this, "QUIT", bx, y, bw, 12, powerOff, {col: C.gy, dim: C.nv});
     endItems(this);
-    if (!meta.tutorialDone && !meta.stats.runs && !meta.arcade.length && Math.floor(T * 2) % 2) txt("< NEW HERE? START HERE", bx + bw + 6, tutY + 3, C.bl);
-    if (this.newArmed && T - this.newArmed < 3) txt("THIS ABANDONS YOUR RUN. PRESS AGAIN.", W / 2, 206, C.rd, 1, "c");
+    if (!meta.tutorialDone && !meta.stats.runs && !meta.arcade.length && Math.floor(T * 2) % 2) txt("< NEW? TRAINING IS IN HERE", bx + bw + 6, tutY + 4, C.bl);
 
     // side info
     txt("TOKENS", 12, 90, C.gy); txt("@" + meta.tokens, 12, 97, C.or);
@@ -2344,18 +2352,13 @@ const TitleScene = {
     txt("FRAGMENTS", 12, 134, C.gy);
     meta.fragments.forEach((f, i) => txt(f ? "@" : "~", 12 + i * 6, 141, f ? C.pk : C.gy));
     txt("DEEPEST", 12, 156, C.gy); txt(meta.stats.bestDepth ? "DEPTH " + meta.stats.bestDepth : "-", 12, 163, C.wh);
-    if (!(this.newArmed && T - this.newArmed < 3) && allFragments() && !meta.secrets.echo && Math.floor(T * 2) % 2) txt("THE SIGNAL IS COMPLETE", W / 2, 206, C.pk, 1, "c");
+    if (allFragments() && !meta.secrets.echo && Math.floor(T * 2) % 2) txt("THE SIGNAL IS COMPLETE", W / 2, 206, C.pk, 1, "c");
     txt("TROPHIES", 12, 178, C.gy); txt(achCount() + "/" + ACH.length, 12, 185, C.ye);
+    const DD = DIFFS[diffLevel()];
+    txt("DIFFICULTY", 12, 200, C.gy); txt(DD.n, 12, 207, DD.col);
     txt(ctl("WASD MOVE  ~  MOUSE AIM  ~  SPACE PULSE  ~  SHIFT DASH", "L-STICK MOVE  ~  R-STICK AIM  ~  RT PULSE  ~  LT DASH", "LEFT THUMB MOVES  ~  RIGHT THUMB AIMS  ~  PULSE / DASH BUTTONS"), W / 2, 224, C.gy, 1, "c");
     txt("V" + VERSION, W - 6, 224, C.nv, 1, "r");
   }
-};
-TitleScene.confirmNew = function () {
-  if (this.newArmed && T - this.newArmed < 3) {
-    this.newArmed = 0;
-    run = this.saved; if (run) endRun("dead");
-    this.saved = null; beginDescent();
-  } else { this.newArmed = T; sfx.deny(); fxWobble(0.3); }
 };
 function beginDescent() {
   const owned = Object.keys(SHIELDS).filter(k => meta.shields[k]);
@@ -2422,14 +2425,19 @@ function arcadeQualifies(s) { return s > 0 && (meta.arcade.length < 10 || s > me
 const ArcadeOver = {
   back() { go(TitleScene); },
   enter() {
-    this.res = {score: G.score, wave: G.wave, chain: G.bestChain, perf: G.perfects}; music("map");
+    const D = DIFFS[G.dl != null ? G.dl : DIFF_NORMAL];
+    this.res = {score: Math.round(G.score * D.score), raw: G.score, dl: G.dl != null ? G.dl : DIFF_NORMAL, wave: G.wave, chain: G.bestChain, perf: G.perfects}; music("map");
     const ph = phantomEntry();
     if (ph && !ph.ghost2 && this.res.score > ph.s && meta.milo !== "stay" && haunted(2)) setTimeout(() => whisper("HE DIDN'T LIKE THAT"), 1200);
     const r = this.res;
     meta.stats.bestWave = Math.max(meta.stats.bestWave || 0, r.wave);
     meta.stats.arcadeGames = (meta.stats.arcadeGames || 0) + 1;
     this.newBest = r.score > 0 && r.score > (meta.stats.bestScore || 0);
-    if (this.newBest) { meta.stats.bestScore = r.score; meta.stats.bestScoreWave = r.wave; }
+    if (this.newBest) {
+      meta.stats.bestScore = r.score; meta.stats.bestScoreWave = r.wave;
+      // the stats behind it travel with the score, so the online boards can check it adds up
+      meta.stats.bestRun = {s: r.score, w: r.wave, k: G.kills | 0, c: G.bestChain | 0, p: G.perfects | 0, r: G.parries | 0, t: Math.round(G.t || 0), d: r.dl};
+    }
     // the cabinet's top 10 fills itself in with the player's initials: no typing after every game
     this.entry = null;
     if (arcadeQualifies(r.score)) {
@@ -2446,7 +2454,9 @@ const ArcadeOver = {
     menuBg();
     title("GAME OVER", 40, C.rd);
     const r = this.res;
-    const rows = [["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain], ["PERFECTS", r.perf]];
+    const D = DIFFS[r.dl];
+    const rows = r.dl === DIFF_NORMAL ? [["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain], ["PERFECTS", r.perf]]
+      : [["POINTS", r.raw], [D.n, scoreMulText(D)], ["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain]];
     rows.forEach((row, i) => { txt(row[0], W / 2 - 60, 74 + i * 12, C.gy); txt(String(row[1]), W / 2 + 60, 74 + i * 12, C.wh, 1, "r"); });
     txt("PLAYER: " + (typeof myName === "function" ? myName() : meta.initials), W / 2, 60, C.gy, 1, "c");
     if ((this.newBest || this.entry) && Math.floor(T * 2) % 2) txt(this.newBest ? "NEW PERSONAL BEST!" : "YOU MADE THE TOP 10", W / 2, 130, this.newBest ? C.ye : C.bl, 1, "c");
@@ -2460,6 +2470,7 @@ const ArcadeOver = {
   }
 };
 const TIPS_ARCADE = ["CATCH LATE, ON THE INNER LINE, FOR A PERFECT.", "A KILLING SHOT KEEPS GOING. LINE THEM UP.",
+  "THE CORNERS ARE LIVE. DON'T HIDE IN THEM.", "CROWD A GUARDIAN AND IT SHOVES BACK. DASH OUT WHEN THE RING CLOSES.",
   "AMBER PLATES THROW YOUR SHOTS BACK. WAIT FOR THE GAP.", "RETURNED SHOTS BOUNCE OFF A WALL ONCE.",
   "PULSE CATCHES EVERYTHING CLOSE AT ONCE.", "PURPLE LINES MEAN A SHOT IS COMING. GOOD."];
 function pick0(a, i) { return a[Math.abs(i) % a.length]; }
@@ -2562,7 +2573,7 @@ function finishNode() {
 }
 
 const ShieldSelect = {
-  back() { go(TitleScene); },
+  back() { go(ModesScene); },
   enter() { this.asc = Math.min(meta.asc || 0, this.asc == null ? (meta.asc || 0) : this.asc); },
   key(k) {
     if (!(meta.asc > 0)) return false;
@@ -3056,6 +3067,7 @@ function pollPad(dt) {
    Settings
    ================================================================ */
 const SETTING_ROWS = [
+  {k: "diff",    n: "DIFFICULTY",      type: "lvl", opts: ["VERY EASY", "EASY", "NORMAL", "HARD", "VERY HARD"], hidden: () => inCombat()},
   {k: "vol",     n: "MASTER VOLUME",   type: "num", min: 0, max: 10},
   {k: "musVol",  n: "MUSIC VOLUME",    type: "num", min: 0, max: 10},
   {k: "sfxVol",  n: "EFFECTS VOLUME",  type: "num", min: 0, max: 10},
@@ -3077,12 +3089,14 @@ function settingValue(r) {
   const v = meta.settings[r.k];
   if (r.type === "num") { const n = v == null ? 8 : v; return "[" + "|".repeat(n) + ".".repeat(r.max - n) + "] " + n; }
   if (r.type === "bool") return v === false ? "OFF" : "ON";
+  if (r.type === "lvl") { const n = v == null ? 2 : v; return "[" + "|".repeat(n + 1) + ".".repeat(r.opts.length - n - 1) + "] " + r.opts[n]; }
   if (r.k === "haunt" && v == null) return r.opts[2];
   return r.opts[v == null ? 0 : v] || r.opts[0];
 }
 function changeSetting(r, dir) {
   const s = meta.settings;
   if (r.type === "num") s[r.k] = clamp((s[r.k] == null ? 8 : s[r.k]) + dir, r.min, r.max);
+  else if (r.type === "lvl") s[r.k] = clamp((s[r.k] == null ? 2 : s[r.k]) + dir, 0, r.opts.length - 1);
   else if (r.type === "bool") s[r.k] = s[r.k] === false;
   else { const n = r.opts.length, cur = s[r.k] == null ? (r.k === "haunt" ? 2 : 0) : s[r.k]; s[r.k] = ((cur + dir) % n + n) % n; }
   applyVolumes(); saveMeta();
@@ -3091,17 +3105,18 @@ function changeSetting(r, dir) {
   if (r.k === "rumble" && s.rumble) padRumble(0.6, 0.4, 150);
 }
 // more rows (phones get a few extra) squeeze a little closer so everything still fits
-const settingGap = () => visibleSettings().length > 12 ? Math.max(13, Math.floor(184 / visibleSettings().length)) : 15;
+const settingGap = () => visibleSettings().length > 12 ? Math.max(11, Math.floor(184 / visibleSettings().length)) : 15;
 function settingsEnd(y0) { return y0 + visibleSettings().length * settingGap() + 4; }
 function drawSettingRows(sc, y0) {
   const gap = settingGap();
   visibleSettings().forEach((r, i) => {
     const y = y0 + i * gap;
     // clicking the left half of a number row turns it down, the right half turns it up
-    const s = btn(sc, null, 44, y, 296, 12, () => changeSetting(r, r.type === "num" && menuClickX != null && menuClickX < 192 ? -1 : 1), {col: C.wh, dim: C.nv});
+    const bar = r.type === "num" || r.type === "lvl";
+    const s = btn(sc, null, 44, y, 296, Math.min(12, gap - 1), () => changeSetting(r, bar && menuClickX != null && menuClickX < 192 ? -1 : 1), {col: C.wh, dim: C.nv});
     txt(r.n, 50, y + 4, s ? C.k : C.lg);
     txt((s ? "< " : "") + settingValue(r) + (s ? " >" : ""), 334, y + 4, s ? C.k : C.bl, 1, "r");
-    if (r.type === "num" && isTouch()) { txt("-", 38, y + 4, C.gy, 1, "c"); txt("+", 346, y + 4, C.gy, 1, "c"); }
+    if (bar && isTouch()) { txt("-", 38, y + 4, C.gy, 1, "c"); txt("+", 346, y + 4, C.gy, 1, "c"); }
   });
 }
 const settingsHint = () => ctl("LEFT / RIGHT TO CHANGE  ~  ESC TO GO BACK", "LEFT / RIGHT TO CHANGE  ~  B TO GO BACK", "TAP A ROW TO CHANGE IT  ~  LEFT HALF OF A BAR TURNS IT DOWN");
@@ -3616,7 +3631,7 @@ const HubScene = {
     this.fig = haunted(2) && meta.flags && meta.flags.crash1 ? FIG[Math.min(3, Math.max(0, h - 2))] : null;
     this.figGone = false; this.lightsT = 8 + rand() * 12; this.dark = 0; this.winT = 6 + rand() * 10; this.winFig = 0;
     music(meta.milo === "free" ? "map" : haunted(3) ? "basement" : "map");
-    if (!meta.hubSeen) { meta.hubSeen = true; saveMeta(); this.dialog = {who: null, text: "THE BACK ROOM. " + ctl("WALK UP TO THINGS AND PRESS ENTER.", "WALK UP TO THINGS AND PRESS A.", "TAP THINGS TO WALK OVER AND USE THEM.") + " EVERYTHING BEHIND THE CABINET LIVES HERE."}; }
+    if (!meta.hubSeen) { meta.hubSeen = true; saveMeta(); this.dialog = {who: null, text: "THE BACK ROOM. " + ctl("WALK UP TO THINGS AND PRESS ENTER.", "WALK UP TO THINGS AND PRESS A.", "DRAG ANYWHERE TO WALK. TAP THINGS (OR PRESS USE) TO USE THEM. THE X IN THE CORNER LEAVES.") + " EVERYTHING BEHIND THE CABINET LIVES HERE."}; }
   },
   back() { if (this.dialog) this.dialog = null; else go(TitleScene); },
   spots() {
@@ -3690,6 +3705,7 @@ const HubScene = {
     if (keys.s || keys.arrowdown) ay += 1;
     if (PAD.connected && (PAD.lx || PAD.ly)) { ax = PAD.lx; ay = PAD.ly; }
     if (PAD.connected && PAD.cur) { const c = PAD.cur; if (c.left) ax = -1; if (c.right) ax = 1; if (c.up) ay = -1; if (c.down) ay = 1; }
+    if (TCH.mx || TCH.my) { ax = TCH.mx; ay = TCH.my; }
     if (this.target) {
       const dx = this.target.x - this.px, dy = this.target.y - this.py, d = Math.hypot(dx, dy);
       if (ax || ay) this.target = null;
@@ -3718,7 +3734,11 @@ const HubScene = {
     if (this.dialog) { this.dialog = null; return true; }
     for (const s of this.spots()) {
       const [bx, by, bw, bh] = s.box;
-      if (x >= bx - 3 && x < bx + bw + 3 && y >= by - 3 && y < by + bh + 3) { this.target = s; return true; }
+      if (x >= bx - 3 && x < bx + bw + 3 && y >= by - 3 && y < by + bh + 3) {
+        // walk to the nearest reachable spot next to it, then use it
+        this.target = {x: clamp(s.x, 14, 370), y: clamp(s.y, 58, 216), act: s.act};
+        return true;
+      }
     }
     if (y > 50) { this.target = {x: clamp(x, 14, 370), y: clamp(y, 58, 216), act: () => {}}; }
     return true;
@@ -3825,7 +3845,7 @@ const HubScene = {
       const w = tw(s) + 14;
       panel(W / 2 - w / 2, 218, w, 12, C.gy);
       txt(s, W / 2, 222, C.wh, 1, "c");
-    } else txt(ctl("WASD / CLICK TO WALK  ~  ENTER TO USE  ~  ESC TO LEAVE", "STICK TO WALK  ~  A TO USE  ~  B TO LEAVE", "TAP SOMETHING TO WALK OVER AND USE IT  ~  THE DOOR LEADS OUT"), W / 2, 222, C.gy, 1, "c");
+    } else txt(ctl("WASD / CLICK TO WALK  ~  ENTER TO USE  ~  ESC TO LEAVE", "STICK TO WALK  ~  A TO USE  ~  B TO LEAVE", "DRAG TO WALK  ~  TAP THINGS OR PRESS USE  ~  X TO LEAVE"), W / 2, 222, C.gy, 1, "c");
   }
 };
 
@@ -4028,43 +4048,49 @@ function gjLogin(user, token, quiet) {
     if (!quiet) toast("GAMEJOLT: LOGGED IN AS " + normText(user), C.li);
     // trophies earned while offline catch up now
     for (const id in meta.ach || {}) gjTrophy(id);
+    if (typeof cloudReset === "function") cloudReset();     // the save on this account gets checked next
     if (typeof onlineEvent === "function") onlineEvent();   // best score and player list follow the account
     return true;
   }).catch(e => { if (!quiet) toast("GAMEJOLT LOGIN FAILED", C.rd); return false; });
 }
-function gjLogout() { meta.gj = null; saveMeta(); toast("GAMEJOLT: LOGGED OUT", C.gy); }
+function gjLogout() { meta.gj = null; saveMeta(); if (typeof cloudReset === "function") cloudReset(); toast("GAMEJOLT: LOGGED OUT", C.gy); }
 
 function gjTrophy(id) {
   const u = gjUser(), tid = GJ.trophies[id];
   if (!u || !tid || !gjReady()) return;
   gjCall("trophies/add-achieved", {username: u.user, user_token: u.token, trophy_id: tid}).catch(() => {});
 }
+// extra(name) builds the stats + checksum for whoever the score goes up as
 function gjAddScore(table, score, label, extra, guest) {
   if (!gjReady() || !GJ.tables[table]) return Promise.resolve(false);
   const u = gjUser();
-  const p = {score: label, sort: score, table_id: GJ.tables[table], extra_data: extra || ""};
+  const p = {score: label, sort: score, table_id: GJ.tables[table]};
   if (u) { p.username = u.user; p.user_token = u.token; } else p.guest = guest || myName();
+  p.extra_data = extra ? extra(u ? u.user : p.guest) : "";
   return gjCall("scores/add", p).then(() => { GJ.board.t = 0; return true; }).catch(() => false);
 }
-function gjArcadeScore(score, wave, initials) { return gjAddScore("arcade", score, score + " PTS ~ WAVE " + wave, "w" + wave, initials); }
-function gjDailyScore(score) { return gjAddScore("daily", score, score + " PTS ~ " + todayStr(), todayStr()); }
-
-function gjRows(scores) {
-  return (scores || []).map(s => ({i: normText(String(s.user || s.guest || "?")).slice(0, 12), s: parseInt(s.sort, 10) || 0, x: s.extra_data || ""}));
+// r = {s: score, w: wave, k: kills, c: best chain, p: perfects, r: parries, t: seconds}
+function gjArcadeScore(r) { return gjAddScore("arcade", r.s, r.s + " PTS ~ WAVE " + r.w, n => arcadeExtra(r, n)); }
+function gjDailyScore(score, st) {
+  const d = Object.assign({date: todayStr()}, st || {});
+  return gjAddScore("daily", score, score + " PTS ~ " + d.date, n => dailyExtra(d, n, score));
 }
+
 function gjFetchBoards(force) {
   if (!gjReady() || (!force && performance.now() - GJ.board.t < 60000)) return;
   GJ.board.t = performance.now(); GJ.board.status = "LOADING...";
   const jobs = [];
-  if (GJ.tables.arcade) jobs.push(gjCall("scores", {table_id: GJ.tables.arcade, limit: 10}).then(r => { GJ.board.arcade = gjRows(r.scores); }));
-  if (GJ.tables.daily) jobs.push(gjCall("scores", {table_id: GJ.tables.daily, limit: 100}).then(r => { GJ.board.daily = gjRows(r.scores); }));
+  GJ.board.hidden = 0;
+  const take = (r, kind) => { const c = checkedRows(r.scores, kind); GJ.board.hidden += c.hidden; return c.rows; };
+  if (GJ.tables.arcade) jobs.push(gjCall("scores", {table_id: GJ.tables.arcade, limit: 50}).then(r => { GJ.board.arcade = take(r, "arcade").slice(0, 10); }));
+  if (GJ.tables.daily) jobs.push(gjCall("scores", {table_id: GJ.tables.daily, limit: 100}).then(r => { GJ.board.daily = take(r, "daily"); }));
   Promise.all(jobs).then(() => { GJ.board.status = ""; }).catch(() => { GJ.board.status = "COULDN'T REACH GAMEJOLT"; });
 }
 const gjFetchDaily = () => gjFetchBoards(false);
 function gjDailyRows() {
   if (!GJ.board.daily) return null;
   const d = todayStr();
-  return GJ.board.daily.filter(r => r.x === d).slice(0, 8);
+  return GJ.board.daily.filter(r => entryDate(r.x) === d).slice(0, 8);
 }
 
 function openGjLogin() {
@@ -4101,12 +4127,16 @@ const OnlineScene = {
         rows.slice(0, 10).forEach((r, i) => {
           const me = u && r.i === normText(u.user);
           txt(String(i + 1).padStart(2, " ") + ". " + r.i, x0, 56 + i * 12, me ? C.ye : C.wh);
+          const D = DIFFS[r.d == null ? DIFF_NORMAL : r.d];
+          if (D && D.tag) txt(D.tag, x0 + tw(String(i + 1).padStart(2, " ") + ". " + r.i) + 4, 56 + i * 12, D.col);
           txt(String(r.s), x1, 56 + i * 12, me ? C.ye : C.wh, 1, "r");
         });
       };
       drawRows(GJ.board.arcade, 16, 180);
       drawRows(gjDailyRows(), 204, 368);
       if (GJ.board.status) txt(GJ.board.status, W / 2, 192, C.gy, 1, "c");
+      else if (GJ.board.hidden) txt(GJ.board.hidden + (GJ.board.hidden === 1 ? " SCORE" : " SCORES") + " DIDN'T ADD UP AND ARE HIDDEN", W / 2, 192, C.gy, 1, "c");
+      else if (typeof cloudStatus === "function") txt(cloudStatus(), W / 2, 192, C.gy, 1, "c");
       btn(this, u ? "LOG OUT" : "LOG IN", 8, 204, 88, 12, () => u ? gjLogout() : openGjLogin(), {col: C.li});
       btn(this, "PLAYERS", 100, 204, 88, 12, () => go(PlayersScene), {col: C.ye});
       btn(this, "CHANGE NAME", 192, 204, 88, 12, () => go(NameScene, {change: true}), {col: C.pk});
@@ -4324,7 +4354,7 @@ const TapeScene = {
     if (meta.tapesDue) delete meta.tapesDue[this.id];
     if (!meta.hauntSeen) meta.hauntSeen = true;
     saveMeta();
-    musTrack = null; this.click = 0;
+    musTrack = null; this.ticks = 0;
     tone(180, 0.08, "square", 0.1); noise(0.12, 0.12, 2000, 800);
     if (tapesRead() >= TAPE_COUNT) unlockAch("tapes");
   },
@@ -4332,7 +4362,7 @@ const TapeScene = {
     this.t += dt;
     const shown = Math.floor(this.t * 34);
     if (shown < this.text.length && Math.floor(this.t * 34) !== Math.floor((this.t - dt) * 34) && this.text[shown] !== " ") {
-      if (++this.click % 2) tone(1400 + rand() * 300, 0.012, "square", 0.025);
+      if (++this.ticks % 2) tone(1400 + rand() * 300, 0.012, "square", 0.025);
     }
     if (Math.floor(this.t * 2) !== Math.floor((this.t - dt) * 2)) noise(0.5, 0.018, 3000, 2500);   // tape hiss
   },
@@ -4367,7 +4397,7 @@ const TapeScene = {
       left -= l.length + 1;
     });
     if (!this.done() && Math.floor(this.t * 4) % 2) R(W - 30, 224, 5, 5, C.rd);
-    txt(this.done() ? "ANY KEY TO STOP THE TAPE" : "ANY KEY TO SKIP", W / 2, 226, C.gy, 1, "c");
+    txt(this.done() ? ctl("ANY KEY TO STOP THE TAPE", "ANY BUTTON TO STOP THE TAPE", "TAP TO STOP THE TAPE") : ctl("ANY KEY TO SKIP", "ANY BUTTON TO SKIP", "TAP TO SKIP"), W / 2, 226, C.gy, 1, "c");
   }
 };
 
@@ -4421,7 +4451,7 @@ const CrashScene = {
       if (t > 0.8) {
         txt("RIPOSTE ARCADE SYSTEM", 24, 24, C.wh);
         const L2 = ["A FATAL EXCEPTION 0E HAS OCCURRED AT 0417:ECHO.", "", "THE CURRENT PLAYER COULD NOT BE REMOVED.",
-          "INPUT 2 IS ACTIVE. NO SECOND CONTROLLER IS CONNECTED.", "", "*  PRESS ANY KEY TO CONTINUE PLAYING.", "*  THERE IS NO OTHER OPTION."];
+          "INPUT 2 IS ACTIVE. NO SECOND CONTROLLER IS CONNECTED.", "", (isTouch() ? "*  TOUCH THE SCREEN TO CONTINUE PLAYING." : "*  PRESS ANY KEY TO CONTINUE PLAYING."), "*  THERE IS NO OTHER OPTION."];
         L2.forEach((l, i) => { if (t > 1 + i * 0.25) txt(l, 24, 48 + i * 10, C.wh); });
         if (Math.floor(t * 2) % 2) R(24, 128, 5, 7, C.wh);
       }
@@ -4772,8 +4802,8 @@ const NameScene = {
     }
     if (this.change) btn(this, "CANCEL", W / 2 - 80, y, 160, 12, () => this.back(), {col: C.gy});
     endItems(this);
-    const foot = gjUser() ? "LOGGED IN TO GAMEJOLT AS " + normText(gjUser().user) + ". SCORES AND TROPHIES GO TO YOUR ACCOUNT."
-      : gjReady() ? "OPTIONAL: LOG IN WITH GAMEJOLT TO KEEP YOUR SCORES ON YOUR ACCOUNT AND EARN TROPHIES." : "";
+    const foot = gjUser() ? "LOGGED IN TO GAMEJOLT AS " + normText(gjUser().user) + ". SCORES, TROPHIES AND YOUR SAVE GO TO YOUR ACCOUNT."
+      : gjReady() ? "OPTIONAL: LOG IN WITH GAMEJOLT TO EARN TROPHIES AND CARRY YOUR SAVE BETWEEN DEVICES." : "";
     wrap(foot, 300).forEach((l, i) => txt(l, W / 2, 188 + i * 9, C.la, 1, "c"));
     txt("YOU CAN CHANGE IT ANY TIME IN RECORDS > ONLINE.", W / 2, 214, C.gy, 1, "c");
   },
@@ -4817,13 +4847,14 @@ const NameScene = {
 function gjIdent() { const u = gjUser(); return u ? "u:" + String(u.user).toLowerCase() : "g:" + meta.pid; }
 let gjSyncBusy = false;
 function gjSyncBest(loud) {
-  const best = meta.stats.bestScore || 0;
-  if (!gjReady() || !GJ.tables.arcade || !meta.name || best <= 0 || gjSyncBusy) return;
+  const best = meta.stats.bestScore || 0, run = meta.stats.bestRun;
+  // a best from before scores carried their stats can't be checked, so it stays where it already is
+  if (!gjReady() || !GJ.tables.arcade || !meta.name || best <= 0 || gjSyncBusy || !run || run.s !== best) return;
   if (!meta.sent || typeof meta.sent !== "object") meta.sent = {};
   const k = gjIdent() + "|arcade";
   if ((meta.sent[k] || 0) >= best) return;
   gjSyncBusy = true;
-  gjArcadeScore(best, meta.stats.bestScoreWave || 0).then(ok => {
+  gjArcadeScore(run).then(ok => {
     gjSyncBusy = false;
     if (!ok) return;                     // offline: the next check tries again
     meta.sent[k] = best; saveMeta();
@@ -4853,6 +4884,7 @@ function onlineTick(dt) {
   if (T - lastInput < 60 && !document.hidden) meta.stats.activeTime = (meta.stats.activeTime || 0) + dt;
   ONLINE.pushT -= dt;
   if (ONLINE.pushT <= 0) { ONLINE.pushT = 300; playerPush(); gjSyncBest(); }
+  cloudTick();
 }
 function onlineEvent() { playerPush(); gjSyncBest(); }
 
@@ -4890,7 +4922,7 @@ function fetchPlayers(force) {
       if (!it.x || String(it.x.success) !== "true") continue;
       try {
         const d = JSON.parse(it.x.data);
-        if (d && d.n) list.push({key: it.k, n: cleanName(d.n) || "?", u: d.u || "", g: (+d.g || 0) + (+d.r || 0),
+        if (playerRecordOk(d)) list.push({key: it.k, n: cleanName(d.n) || "?", u: d.u || "", g: (+d.g || 0) + (+d.r || 0),
           t: +d.t || 0, b: +d.b || 0, l: +d.l || 0, me: it.k === "p_" + meta.pid});
       } catch (e) {}
     }
@@ -5029,8 +5061,11 @@ function touchLayout() {
                    : {id: "dash", x: px - B * 1.02, y: py - B * 0.5, r: B * 0.4, label: "DASH", col: C.li};
   const ps = B * 0.46;
   const pause = {id: "pause", x: inR ? w - SAFE.r - rFree / 2 : w - SAFE.r - m - ps / 2, y: SAFE.t + m + ps / 2, r: ps / 2, label: "", col: C.lg};
+  // walking around (the back room): USE where PULSE sits, EXIT where pause sits
+  const use = {id: "use", x: pulse.x, y: pulse.y, r: pulse.r, label: "USE", col: C.ye};
+  const exit = {id: "exit", x: pause.x, y: pause.y, r: pause.r, label: "", col: C.lg};
   const R = clamp(Math.min(w, h) * 0.13, 38, 70) * big;             // stick radius
-  TLO = {w, h, B, m, R, gutter, buttons: [pulse, dash, pause], split: w * 0.45,
+  TLO = {w, h, B, m, R, gutter, buttons: [pulse, dash, pause], walkButtons: [use, exit], split: w * 0.45,
     moveHint: {x: lFree >= R * 2 + 8 ? SAFE.l + lFree / 2 : SAFE.l + m + R, y: h - SAFE.b - m - R},
     aimHint: {x: Math.min(px - B * 1.9, w * 0.72), y: h - SAFE.b - m - R}};
   TLO_KEY = key;
@@ -5043,18 +5078,31 @@ function tPos(e) { const r = screenCv.getBoundingClientRect(); return {x: e.clie
 function touchCombatOn() {
   return isTouch() && inCombat() && G && !G.paused && !G.over && G.mode !== "attract" && !portraitBlocked();
 }
+// rooms you walk around in (the back room): a stick, USE and EXIT
+function touchWalkOn() {
+  return isTouch() && scene && scene.walk && !scene.count && !modalOpen && !portraitBlocked();
+}
+function touchMode() { return touchCombatOn() ? "fight" : touchWalkOn() ? "walk" : null; }
+function touchButtons(mode) { const Lo = touchLayout(); return mode === "walk" ? Lo.walkButtons : Lo.buttons; }
 function touchButtonAct(id) {
   if (id === "pulse") doPulse();
   else if (id === "dash") doDash();
   else if (id === "pause") dispatchKey("p");
+  else if (id === "use") dispatchKey("enter");
+  else if (id === "exit") { if (scene && scene.back) scene.back(); }
 }
-function touchDown(e) {
+function touchDown(e, mode) {
   const p = tPos(e), Lo = touchLayout();
   try { screenCv.setPointerCapture(e.pointerId); } catch (er) {}
-  for (const b of Lo.buttons) {
+  for (const b of touchButtons(mode)) {
     if (Math.hypot(p.x - b.x, p.y - b.y) <= b.r + Lo.m * 0.6) {
       TCH.btn[e.pointerId] = b.id; TCH.press[b.id] = T; buzz(8); touchButtonAct(b.id); return;
     }
+  }
+  if (mode === "walk") {
+    // drag anywhere to walk; a tap without dragging walks over to what you tapped (and uses it)
+    if (!TCH.move) TCH.move = {id: e.pointerId, ox: p.x, oy: p.y, x: p.x, y: p.y, walk: true, moved: 0, lo: toLo(e)};
+    return;
   }
   if (p.x < Lo.split) { if (!TCH.move) { TCH.move = {id: e.pointerId, ox: p.x, oy: p.y, x: p.x, y: p.y}; TCH.usedMove = true; } }
   else if (!TCH.aim) { TCH.aim = {id: e.pointerId, ox: p.x, oy: p.y, x: p.x, y: p.y, t0: T, moved: 0}; }
@@ -5066,14 +5114,19 @@ function touchMove(e) {
     if (!s || s.id !== e.pointerId) continue;
     s.x = p.x; s.y = p.y;
     const dx = s.x - s.ox, dy = s.y - s.oy, d = Math.hypot(dx, dy);
+    if (s.walk || s === TCH.aim) s.moved = Math.max(s.moved, d);
     if (s === TCH.move && d > R) { s.ox = s.x - dx / d * R; s.oy = s.y - dy / d * R; }   // the stick follows a wandering thumb
-    if (s === TCH.aim) s.moved = Math.max(s.moved, d);
   }
   sticks();
 }
 function touchUp(e) {
   if (TCH.btn[e.pointerId]) { delete TCH.btn[e.pointerId]; return; }
-  if (TCH.move && TCH.move.id === e.pointerId) TCH.move = null;
+  if (TCH.move && TCH.move.id === e.pointerId) {
+    const s = TCH.move; TCH.move = null;
+    if (s.walk && s.moved < 12 && e.type === "pointerup" && scene && touchWalkOn()) {
+      if (scene.click) scene.click(s.lo.x, s.lo.y);
+    }
+  }
   if (TCH.aim && TCH.aim.id === e.pointerId) {
     const a = TCH.aim; TCH.aim = null;
     if (e.type === "pointerup" && a.moved < 9 && T - a.t0 < 0.25 && touchCombatOn()) doPulse();   // a quick tap on the right side pulses too
@@ -5083,7 +5136,7 @@ function touchUp(e) {
 function touchReset() { TCH.move = TCH.aim = null; TCH.btn = {}; TCH.mx = TCH.my = 0; }
 function sticks() {
   const R = touchLayout().R;
-  if (TCH.move) {
+  if (TCH.move && !(TCH.move.walk && TCH.move.moved < 12)) {
     let dx = (TCH.move.x - TCH.move.ox) / R, dy = (TCH.move.y - TCH.move.oy) / R;
     const m = Math.hypot(dx, dy);
     if (m < 0.14) dx = dy = 0; else if (m > 1) { dx /= m; dy /= m; }
@@ -5119,10 +5172,12 @@ function hexA(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return "rgba(" + (n >> 16 & 255) + "," + (n >> 8 & 255) + "," + (n & 255) + "," + a + ")";
 }
+let tuiMode = null;
 function drawTouchUI() {
   if (!tctx) return;
-  if (!touchCombatOn()) {
-    touchReset();
+  const mode = touchMode();
+  if (mode !== tuiMode) { touchReset(); tuiMode = mode; }
+  if (!mode) {
     if (tuiDirty) { tctx.setTransform(1, 0, 0, 1, 0, 0); tctx.clearRect(0, 0, tuiCv.width, tuiCv.height); tuiDirty = false; }
     return;
   }
@@ -5130,6 +5185,7 @@ function drawTouchUI() {
   const cw = Math.round(Lo.w * d), ch = Math.round(Lo.h * d);
   if (tuiCv.width !== cw || tuiCv.height !== ch) { tuiCv.width = cw; tuiCv.height = ch; }
   tctx.setTransform(d, 0, 0, d, 0, 0); tctx.clearRect(0, 0, Lo.w, Lo.h); tuiDirty = true;
+  if (mode === "walk") { drawWalkUI(Lo); return; }
   const p = G.p, R = Lo.R;
   // move stick
   if (TCH.move) {
@@ -5174,6 +5230,25 @@ function drawTouchUI() {
   }
 }
 
+function drawWalkUI(Lo) {
+  const R = Lo.R, s = TCH.move;
+  if (s && s.moved >= 12) {
+    tCircle(s.ox, s.oy, R, "rgba(5,6,12,0.28)", "rgba(255,241,232,0.35)", 2);
+    tCircle(s.ox + TCH.mx * R, s.oy + TCH.my * R, R * 0.42, hexA(C.bl, 0.55), hexA(C.bl, 0.9), 2);
+  }
+  // USE lights up when there's something to use (or someone talking)
+  const canUse = !!(scene.dialog || (scene.nearest && scene.nearest()));
+  for (const b of Lo.walkButtons) {
+    const down = T - (TCH.press[b.id] || -9) < 0.12, on = b.id !== "use" || canUse;
+    tCircle(b.x, b.y, b.r, down ? hexA(b.col, 0.55) : "rgba(5,6,12,0.42)", hexA(on ? b.col : C.gy, on ? 0.85 : 0.5), 2.5);
+    if (b.id === "exit") {                            // an X
+      const k = b.r * 0.38;
+      tctx.lineWidth = 3; tctx.strokeStyle = "rgba(255,241,232,0.85)";
+      tctx.beginPath(); tctx.moveTo(b.x - k, b.y - k); tctx.lineTo(b.x + k, b.y + k); tctx.moveTo(b.x + k, b.y - k); tctx.lineTo(b.x - k, b.y + k); tctx.stroke();
+    } else tText(scene.dialog ? "OK" : b.label, b.x, b.y, Math.max(8, b.r * 0.3), hexA(on ? b.col : C.gy, on ? 1 : 0.6));
+  }
+}
+
 /* ---------------- vibration (Android; iPhones don't allow it) ---------------- */
 function buzz(ms) {
   if (!isTouch() || meta.settings.rumble === false || !navigator.vibrate) return;
@@ -5212,6 +5287,7 @@ function onHidden() {
   if (inCombat() && G && !G.over && G.mode !== "attract") G.paused = true;
   touchReset();
   try { saveMeta(); if (typeof run !== "undefined" && run) saveRun(); } catch (e) {}
+  try { cloudFlush(); } catch (e) {}
   try { if (AC && AC.state === "running") AC.suspend(); } catch (e) {}
 }
 document.addEventListener("visibilitychange", () => {
@@ -5230,6 +5306,561 @@ window.addEventListener("touchend", () => audioInit(), {passive: true});
   } catch (e) {}
 })();
 if (portraitQ && portraitQ.addEventListener) portraitQ.addEventListener("change", () => { if (portraitBlocked() && inCombat() && G && !G.over) G.paused = true; });
+/* ================================================================
+   Fair fights
+   Enemies don't get pinned in corners, they sidestep when you crowd
+   them, guardians shove you out of their space (after a warning),
+   and hiding in a corner stops being safe: the corners are live.
+   ================================================================ */
+const WALL_M = 26;         // enemies start steering off a wall this close to it
+const CORNER_BOX = 38;     // how deep into a corner counts as hiding there
+const CORNER_R = 60;       // the zap covers this far from the corner point
+
+// while an enemy decides where to go: tv = [vx, vy] it wants to move at
+function steerFoe(f, base, p, dist, tv) {
+  let wx = 0, wy = 0;
+  if (f.x < AX0 + WALL_M) wx += AX0 + WALL_M - f.x;
+  if (f.x > AX1 - WALL_M) wx -= f.x - (AX1 - WALL_M);
+  if (f.y < AY0 + WALL_M) wy += AY0 + WALL_M - f.y;
+  if (f.y > AY1 - WALL_M) wy -= f.y - (AY1 - WALL_M);
+  if (!wx && !wy) return;
+  const crowd = dist < (f.want || 90) * 0.85;       // the player is pressing in
+  const k = crowd ? 4.5 : 2.2;
+  tv[0] += wx * k; tv[1] += wy * k;
+  if (crowd) {
+    // circle round the player towards open floor, instead of backing into the wall
+    const tx = -(p.y - f.y) / dist, ty = (p.x - f.x) / dist;
+    const side = tx * (ACX - f.x) + ty * (ACY - f.y) >= 0 ? 1 : -1;
+    if (Math.sign(f.orbit) !== side) f.orbit = (Math.abs(f.orbit) || 0.7) * side;
+  }
+}
+
+const NO_DODGE = {rusher: 1, hollow: 1, mine: 1};
+// after an enemy moves: sidesteps, and the guardians' personal space
+function foeDefense(f, base, p, dist, dt) {
+  if (G.mode === "attract" || G.mode === "training" || G.over || f.dormant) return;
+  if (base.boss) { bossSpace(f, p, dist, dt); return; }
+  if (NO_DODGE[f.type] || f.born < 1) return;
+  if (f.dodgeCd > 0) { f.dodgeCd -= dt; return; }
+  if (dist > f.r + 22) return;
+  // crowded: slip sideways towards open floor
+  const nx = (f.x - p.x) / dist, ny = (f.y - p.y) / dist;
+  let sx = -ny, sy = nx;
+  if (sx * (ACX - f.x) + sy * (ACY - f.y) < 0) { sx = -sx; sy = -sy; }
+  f.vx = (sx * 0.8 + nx * 0.6) * 165; f.vy = (sy * 0.8 + ny * 0.6) * 165;
+  f.dodgeCd = (f.elite ? 1.2 : 2) + rand() * 0.8;
+  burst(f.x, f.y, 6, C.gy, 60, 0.25);
+}
+
+const repelWind = f => (f.p2 ? 0.42 : 0.55) * DLV().wind;
+const repelRadius = f => f.r + 58;
+function bossSpace(f, p, dist, dt) {
+  if (f.born < 1.6) return;
+  if (f.repelCd > 0) f.repelCd -= dt;
+  if (f.repelT > 0) {                                   // winding up: the warning ring closes in
+    f.repelT -= dt;
+    if (f.repelT <= 0) bossRepel(f, p);
+    return;
+  }
+  const close = dist < f.r + 30;
+  f.crowdT = close ? (f.crowdT || 0) + dt : Math.max(0, (f.crowdT || 0) - dt * 2);
+  if (f.crowdT > 0.45 && !(f.repelCd > 0)) {
+    f.repelT = repelWind(f); f.crowdT = 0;
+    tone(150, repelWind(f), "sawtooth", 0.09, 420);
+    if (!(meta.flags && meta.flags.repelTip)) { if (meta.flags) meta.flags.repelTip = 1; floatTxt(f.x, f.y - f.r - 10, "BACK OFF", C.rd); }
+  }
+  // guardians don't stay pinned against a wall either
+  const wall = f.x < AX0 + 22 || f.x > AX1 - 22 || f.y < AY0 + 22 || f.y > AY1 - 22;
+  f.wallT = wall && dist < 90 ? (f.wallT || 0) + dt : 0;
+  if (f.wallT > 1.1) {
+    f.wallT = 0;
+    const a = Math.atan2(ACY - f.y, ACX - f.x);
+    f.vx = Math.cos(a) * 200; f.vy = Math.sin(a) * 200;
+    burst(f.x, f.y, 10, C.lg, 90, 0.3);
+  }
+}
+function bossRepel(f, p) {
+  const RR = repelRadius(f);
+  f.repelCd = f.p2 ? 2.4 : 3.2;
+  ring(f.x, f.y, RR, C.rd, 0.4); ring(f.x, f.y, RR * 0.6, C.or, 0.3);
+  burst(f.x, f.y, 24, C.rd, 170, 0.45);
+  G.shake = Math.min(6, G.shake + 4);
+  noise(0.3, 0.2, 500, 90); tone(110, 0.25, "square", 0.14, 50);
+  // your shots crowding it get swatted out of the air
+  for (let i = G.bullets.length - 1; i >= 0; i--) {
+    const b = G.bullets[i];
+    if (b && b.friend && Math.hypot(b.x - f.x, b.y - f.y) < RR) { burst(b.x, b.y, 3, C.or, 40, 0.2); G.bullets.splice(i, 1); }
+  }
+  const dx = p.x - f.x, dy = p.y - f.y, d = Math.hypot(dx, dy) || 1;
+  if (d < RR) {
+    p.vx += dx / d * 300; p.vy += dy / d * 300;
+    if (p.inv <= 0) hurt();
+    else floatTxt(p.x, p.y - 10, "DODGED", C.li);     // dashing through it still works
+  }
+}
+
+// hiding in a corner: after a while it sparks, with a warning first
+function cornerHazard(p, dt) {
+  if (G.mode === "attract" || G.mode === "training" || G.over) { G.cornerT = 0; G.cornerZap = null; return; }
+  const z = G.cornerZap;
+  if (z) {
+    z.t -= dt;
+    if (z.t <= 0) {
+      G.cornerZap = null; G.cornerT = 0;
+      const ix = z.x < ACX ? 1 : -1, iy = z.y < ACY ? 1 : -1;
+      ring(z.x, z.y, CORNER_R, C.ye, 0.35);
+      burst(z.x + ix * 14, z.y + iy * 14, 30, C.ye, 150, 0.5);
+      G.shake = Math.min(6, G.shake + 3);
+      noise(0.35, 0.22, 4200, 900);
+      if (Math.hypot(p.x - z.x, p.y - z.y) < CORNER_R && p.inv <= 0) hurt();
+    }
+    return;
+  }
+  const inCorner = (p.x < AX0 + CORNER_BOX || p.x > AX1 - CORNER_BOX) && (p.y < AY0 + CORNER_BOX || p.y > AY1 - CORNER_BOX);
+  const busy = G.foes.some(f => f.type !== "mine" && !f.dormant);
+  G.cornerT = inCorner && busy ? (G.cornerT || 0) + dt : Math.max(0, (G.cornerT || 0) - dt);
+  if (G.cornerT > 2.4 * DLV().corner) {
+    const wt = 0.9 * DLV().wind;
+    G.cornerZap = {x: p.x < ACX ? AX0 : AX1, y: p.y < ACY ? AY0 : AY1, t: wt, max: wt};
+    tone(880, 0.1, "square", 0.08); tone(660, 0.12, "square", 0.08, null, AC && AC.currentTime + 0.14);
+    if (meta.flags && !meta.flags.cornerTip) {
+      meta.flags.cornerTip = 1;
+      floatTxt(clamp(p.x, 60, W - 60), clamp(p.y + (p.y < ACY ? 22 : -22), 30, H - 20), "THE CORNERS ARE LIVE", C.ye);
+    }
+  }
+}
+
+// warnings: a guardian winding up its shove, and a corner about to spark
+function drawDefenses() {
+  const blink = Math.floor(T * 10) % 2;
+  for (const f of G.foes) {
+    if (!(f.repelT > 0)) continue;
+    const k = 1 - f.repelT / repelWind(f);
+    const r = repelRadius(f) * (1 - k * 0.75) + f.r * k * 0.75;
+    ringDots(f.x, f.y, repelRadius(f), blink ? C.rd : C.pl, 4);
+    ringDots(f.x, f.y, r, blink ? C.or : C.rd, 3);
+  }
+  const z = G.cornerZap;
+  if (z) {
+    L.save(); L.beginPath(); L.rect(AX0, AY0, AX1 - AX0, AY1 - AY0); L.clip();
+    L.globalAlpha = blink ? 0.22 : 0.1;
+    L.fillStyle = C.rd; L.beginPath(); L.arc(z.x, z.y, CORNER_R, 0, TAU); L.fill();
+    L.globalAlpha = 1;
+    ringDots(z.x, z.y, CORNER_R, blink ? C.ye : C.rd, 3);
+    const k = 1 - z.t / z.max;
+    for (let i = 0; i < 6; i++) {                     // sparks crawling along both walls
+      const s = (i / 6 + T * 1.7) % 1 * CORNER_R * (0.4 + k * 0.6);
+      P(z.x + (z.x < ACX ? 1 : -2), z.y + (z.y < ACY ? s : -s), C.ye);
+      P(z.x + (z.x < ACX ? s : -s), z.y + (z.y < ACY ? 1 : -2), C.ye);
+    }
+    L.restore();
+  }
+}
+/* ================================================================
+   Score checks
+   Every score the game sends carries the stats behind it (wave, kills,
+   best chain, catches, time) and a checksum. The boards inside the game
+   only show entries whose numbers add up, so a score typed straight into
+   GameJolt's API, or one that's impossible for the run it claims, is
+   left out. Scores from before this version stay if they were sent
+   before the switch-over.
+   ================================================================ */
+const LEGACY_CUTOFF = 1790294400;          // 25 Sep 2026 00:00 UTC: gives everyone a few days to update
+const SCORE_MAX = 1e8;
+
+function scoreProof(parts) { return md5((GJ.key || "riposte") + "|" + parts.join("|")).slice(0, 10); }
+const proofName = n => String(n || "").toLowerCase();
+
+// arcade: A3|wave|kills|best chain|perfects|parries|seconds|difficulty|proof
+function arcadeExtra(r, name) {
+  const f = [r.w | 0, r.k | 0, r.c | 0, r.p | 0, r.r | 0, r.t | 0, r.d == null ? DIFF_NORMAL : r.d | 0];
+  return ["A3"].concat(f, [scoreProof(["A3", proofName(name), r.s | 0].concat(f))]).join("|");
+}
+function entryDiff(x) { const m = /^A3\|(?:\d+\|){6}(\d)\|/.exec(String(x || "")); return m ? +m[1] : DIFF_NORMAL; }
+// daily: D2|date|depth|kills|perfects|guardians|won|true end|proof
+function dailyExtra(d, name, score) {
+  const f = [d.date, d.d | 0, d.k | 0, d.p | 0, d.b | 0, d.w ? 1 : 0, d.t ? 1 : 0];
+  return ["D2"].concat(f, [scoreProof(["D2", proofName(name), score | 0].concat(f))]).join("|");
+}
+
+function entryName(s) { return String(s.user || s.guest || ""); }
+function legacyOk(s) { return (parseInt(s.stored_timestamp, 10) || 0) < LEGACY_CUTOFF; }
+
+function arcadeValid(s) {
+  const score = parseInt(s.sort, 10) || 0, x = String(s.extra_data || "");
+  if (score < 0 || score > SCORE_MAX) return false;
+  const m = /^(A2|A3)\|(\d+)\|(\d+)\|(\d+)\|(\d+)\|(\d+)\|(\d+)\|(?:(\d)\|)?([0-9a-f]{10})$/.exec(x);
+  if (!m) return /^w\d+$/.test(x) && score <= 500000 && legacyOk(s);
+  const v = m[1], [w, k, c, p, r, t] = m.slice(2, 8).map(Number), dl = v === "A3" ? +m[8] : DIFF_NORMAL;
+  if ((v === "A3") !== (m[8] != null) || !DIFFS[dl]) return false;
+  const parts = [v, proofName(entryName(s)), score, w, k, c, p, r, t].concat(v === "A3" ? [dl] : []);
+  if (m[9] !== scoreProof(parts)) return false;
+  // what the run claims has to be possible (checked on the points before the difficulty multiplier)
+  if (w < 1 || w > 400 || c > k + 1 || t < (w - 1) * 3 || p > k * 10 + 500 || r > k * 20 + 800) return false;
+  const ceiling = (k * 96000 + (p + 40) * 30 + r * 10) * Math.max(1, c) + 2000;
+  return score / DIFFS[dl].score <= ceiling + 1;
+}
+function dailyValid(s) {
+  const score = parseInt(s.sort, 10) || 0, x = String(s.extra_data || "");
+  const m = /^D2\|(\d{4}-\d{2}-\d{2})\|(\d+)\|(\d+)\|(\d+)\|(\d+)\|([01])\|([01])\|([0-9a-f]{10})$/.exec(x);
+  if (!m) return /^\d{4}-\d{2}-\d{2}$/.test(x) && score <= 20000 && legacyOk(s);
+  const [d, k, p, b, w, t] = m.slice(2, 8).map(Number);
+  if (m[8] !== scoreProof(["D2", proofName(entryName(s)), score, m[1], d, k, p, b, w, t])) return false;
+  if (d < 1 || d > 6 || b > d + 1 || k > 800 || p > k * 10 + 500) return false;
+  return score === d * 1000 + k * 10 + p * 25 + b * 500 + w * 3000 + t * 2000;   // the daily score is a formula, so it must match exactly
+}
+function entryDate(x) {
+  const m = /^D2\|(\d{4}-\d{2}-\d{2})\|/.exec(String(x || ""));
+  return m ? m[1] : String(x || "");
+}
+// the board rows the game shows, with anything that doesn't add up left out
+function checkedRows(scores, kind) {
+  const all = scores || [];
+  const ok = all.filter(kind === "daily" ? dailyValid : arcadeValid);
+  return {rows: ok.map(s => ({i: normText(entryName(s) || "?").slice(0, 12), s: parseInt(s.sort, 10) || 0, x: s.extra_data || "",
+      d: kind === "daily" ? DIFF_NORMAL : entryDiff(s.extra_data)})),
+    hidden: all.length - ok.length};
+}
+
+// the player list is sent by every copy of the game too: drop records that can't be real
+function playerRecordOk(d) {
+  return d && typeof d.n === "string" && d.n.length > 0 && d.n.length <= 24 &&
+    (+d.t || 0) >= 0 && (+d.t || 0) < 3.2e7 && (+d.g || 0) >= 0 && (+d.g || 0) < 1e6 && (+d.b || 0) >= 0 && (+d.b || 0) <= SCORE_MAX;
+}
+/* ================================================================
+   Cloud saves
+   When you're logged in with GameJolt, your progress is also kept in
+   your own GameJolt data store, so you can carry on from the PC, the
+   laptop or a phone. Each device writes only its own slot, so nothing
+   ever overwrites another device's save. Every save carries a small
+   counter per device (how many times each device has backed up along
+   its history), which tells the game whether another device's save is
+   newer, older, or went its own way:
+   - newer, and this device hasn't moved on: take it, no questions;
+   - both moved on: show the two saves side by side and let you pick.
+   Settings and the login itself stay per device.
+   ================================================================ */
+const CLOUD = {checked: false, busy: false, tryT: -99, lastUp: -99, fpT: -99, checkT: -99, changed: false, conflict: null, adopt: null,
+  status: "", syncedAt: 0, snooze: false, seen: {}, ownVV: {}};
+const DEVICE_ID = (() => {
+  try {
+    let d = localStorage.getItem("riposte.device");
+    if (!d) { d = Date.now().toString(36).slice(-4) + Math.random().toString(36).slice(2, 8); localStorage.setItem("riposte.device", d); }
+    return d;
+  } catch (e) { return "nostore"; }
+})();
+const slotKey = () => "save-" + DEVICE_ID;
+const CLOUD_LOCAL = {gj: 1, settings: 1, cloud: 1, sent: 1, saveT: 1};   // never leave this device
+
+// per-device counters: a is newer (1), older (-1), the same (0), or they split (2)
+function vvMax(a, b) { const o = Object.assign({}, a || {}); for (const k in b || {}) o[k] = Math.max(o[k] || 0, b[k] | 0); return o; }
+function vvCmp(a, b) {
+  let gt = false, lt = false;
+  for (const k of new Set(Object.keys(a || {}).concat(Object.keys(b || {})))) {
+    const x = (a || {})[k] | 0, y = (b || {})[k] | 0;
+    if (x > y) gt = true; if (x < y) lt = true;
+  }
+  return gt && lt ? 2 : gt ? 1 : lt ? -1 : 0;
+}
+
+function cloudUserKey() { const u = gjUser(); return u ? String(u.user).toLowerCase() : ""; }
+function cloudMine() { const c = meta.cloud || {}; return c.user && c.user === cloudUserKey() ? c : {}; }
+function deviceLabel() { return window.RIPOSTE_APP ? "WINDOWS" : COARSE ? "PHONE" : "BROWSER"; }
+function runText() { try { return localStorage.getItem(RUN_KEY) || ""; } catch (e) { return ""; } }
+
+// what counts as progress: everything except play time, per-device settings and one-off tips
+function cloudFingerprint(m, runStr) {
+  const c = {};
+  for (const k in m) if (!CLOUD_LOCAL[k] && k !== "playTime") c[k] = m[k];
+  if (c.stats) { c.stats = Object.assign({}, c.stats); delete c.stats.activeTime; }
+  if (c.flags) { c.flags = Object.assign({}, c.flags); delete c.flags.iosHint; delete c.flags.cornerTip; delete c.flags.repelTip; }
+  return hash(JSON.stringify(c) + "|" + (runStr || ""));
+}
+const cloudDirty = () => { const mine = cloudMine(); return mine.vv ? cloudFingerprint(meta, runText()) !== mine.fp : !freshSave(meta); };
+
+// big saves go in the request body; GameJolt then signs the url plus "data" plus the data itself
+function gjPost(endpoint, params, data, keepalive) {
+  if (!gjReady()) return Promise.reject(new Error("not set up"));
+  let url = "https://api.gamejolt.com/api/game/v1_2/" + endpoint + "/?game_id=" + encodeURIComponent(GJ.gameId);
+  for (const k in params) if (params[k] !== undefined && params[k] !== "") url += "&" + k + "=" + encodeURIComponent(params[k]);
+  url += "&signature=" + md5(url + "data" + data + GJ.key);
+  return fetch(url, {method: "POST", headers: {"Content-Type": "application/x-www-form-urlencoded"},
+    body: "data=" + encodeURIComponent(data), keepalive: !!keepalive})
+    .then(r => r.json()).then(j => {
+      const res = j && j.response;
+      if (!res || String(res.success) !== "true") throw new Error((res && res.message) || "failed");
+      return res;
+    });
+}
+
+// back this device's save up into its own slot (merge: also count past every save it has been shown)
+function cloudUpload(keepalive, merge) {
+  const u = gjUser();
+  if (!u || CLOUD.busy || CLOUD.conflict || !CLOUD.checked) return Promise.resolve(false);
+  const mine = cloudMine(), vv = vvMax(mine.vv, merge ? CLOUD.seen : null);
+  vv[DEVICE_ID] = (vv[DEVICE_ID] | 0) + 1;
+  const m = {};
+  for (const k in meta) if (!CLOUD_LOCAL[k]) m[k] = meta[k];
+  let r = null; try { r = JSON.parse(runText() || "null"); } catch (e) {}
+  const fp = cloudFingerprint(meta, runText());
+  const body = JSON.stringify({v: VERSION, vv, t: Date.now(), device: DEVICE_ID, dev: deviceLabel(), saved: meta.saveT || Date.now(), meta: m, run: r});
+  CLOUD.busy = true; CLOUD.lastUp = T;
+  return gjPost("data-store/set", {key: slotKey(), username: u.user, user_token: u.token}, body, keepalive && body.length < 60000)
+    .then(() => {
+      meta.cloud = {user: cloudUserKey(), vv, fp, play: meta.playTime || 0};
+      CLOUD.seen = vvMax(CLOUD.seen, vv);
+      CLOUD.syncedAt = Date.now(); CLOUD.changed = false; CLOUD.status = "";
+      saveMeta();
+      return true;
+    })
+    .catch(() => { CLOUD.status = "COULDN'T BACK UP TO GAMEJOLT, WILL TRY AGAIN"; return false; })
+    .then(ok => { CLOUD.busy = false; return ok; });
+}
+
+// a save with nothing in it yet (a new device) gives way without asking
+function freshSave(m) {
+  return !(m.stats && (m.stats.runs || m.stats.arcadeGames || m.stats.kills)) && !Object.keys(m.ach || {}).length && !m.earned;
+}
+// every slot on this account (this device's own included)
+function cloudSlots(u) {
+  const auth = {username: u.user, user_token: u.token};
+  return gjCall("data-store/get-keys", Object.assign({pattern: "save-*"}, auth)).then(r => {
+    const keys = (Array.isArray(r.keys) ? r.keys : []).map(k => k.key).filter(Boolean).slice(0, 25);
+    if (!keys.length) return [];
+    return gjBatch(keys.map(k => ["data-store", Object.assign({key: k}, auth)])).then(rs => rs.map(x => {
+      try { return x && String(x.success) === "true" ? JSON.parse(x.data) : null; } catch (e) { return null; }
+    }).filter(c => c && c.meta && c.vv));
+  });
+}
+function cloudCheck() {
+  const u = gjUser();
+  if (!u || !gjReady() || CLOUD.busy) return;
+  CLOUD.busy = true; CLOUD.checkT = T;
+  if (!CLOUD.checked) CLOUD.status = "CHECKING YOUR GAMEJOLT SAVE...";
+  cloudSlots(u).then(slots => {
+    CLOUD.busy = false; CLOUD.checked = true; CLOUD.status = "";
+    const mine = cloudMine(), own = slots.find(c => c.device === DEVICE_ID), others = slots.filter(c => c.device !== DEVICE_ID);
+    for (const c of slots) CLOUD.seen = vvMax(CLOUD.seen, c.vv);
+    CLOUD.ownVV = own ? own.vv : {};
+    const byTime = (a, b) => b.t - a.t;
+    const split = others.filter(c => vvCmp(c.vv, mine.vv) === 2).sort(byTime);
+    const newer = others.filter(c => vvCmp(c.vv, mine.vv) === 1).sort(byTime);
+    if (split.length) { CLOUD.conflict = split[0]; return; }                         // two devices went their own ways
+    if (newer.length) { if (cloudDirty()) CLOUD.conflict = newer[0]; else CLOUD.adopt = newer[0]; return; }
+    if (cloudDirty() || !own || mine.push) cloudUpload(false, !!mine.push);          // we're the newest: make sure our slot says so
+    else CLOUD.syncedAt = Date.now();
+  }).catch(() => { CLOUD.busy = false; CLOUD.status = "COULDN'T REACH GAMEJOLT FOR YOUR SAVE"; });
+}
+
+function cloudAdopt(c) {
+  try {
+    const m = mergeDeep(freshMeta(), JSON.parse(JSON.stringify(c.meta)));
+    m.gj = meta.gj; m.settings = meta.settings; m.sent = meta.sent || {};
+    const runStr = c.run ? JSON.stringify(c.run) : "";
+    // this device's slot gets rewritten with the loaded save on the next start (push), counted past everything seen
+    m.cloud = {user: cloudUserKey(), vv: vvMax(c.vv, CLOUD.ownVV), fp: cloudFingerprint(m, runStr), play: m.playTime || 0, push: 1};
+    NO_SAVE = true;                                  // nothing may write the old save back over it now
+    localStorage.setItem(SAVE_KEY, JSON.stringify(m));
+    if (runStr) localStorage.setItem(RUN_KEY, runStr); else localStorage.removeItem(RUN_KEY);
+    if (meta.pid && m.pid && meta.pid !== m.pid) sessionStorage.setItem("riposte.oldpid", meta.pid);
+    sessionStorage.setItem("riposte.cloudmsg", "SAVE LOADED FROM GAMEJOLT (" + (c.dev || "ANOTHER DEVICE") + ")");
+    sessionStorage.setItem("riposte.resume", scene === HubScene || hubReturn ? "hub" : "title");
+    location.reload();
+  } catch (e) { NO_SAVE = false; toast("COULDN'T LOAD THE GAMEJOLT SAVE", C.rd); }
+}
+
+const cloudCalm = () => !modalOpen && [TitleScene, HubScene, OnlineScene, RecordsScene, ModesScene].includes(scene);
+function cloudTick() {
+  if (!gjUser() || !gjReady()) {
+    if (CLOUD.checked || CLOUD.conflict) Object.assign(CLOUD, {checked: false, conflict: null, adopt: null, status: "", syncedAt: 0});
+    return;
+  }
+  if (!CLOUD.checked) {
+    if (!CLOUD.busy && T - CLOUD.tryT > 30 && scene !== BootScene && scene !== NameScene) { CLOUD.tryT = T; cloudCheck(); }
+    return;
+  }
+  if (CLOUD.adopt && cloudCalm()) { const c = CLOUD.adopt; CLOUD.adopt = null; cloudAdopt(c); return; }
+  if (CLOUD.conflict) { if (!CLOUD.snooze && cloudCalm() && scene !== CloudScene) go(CloudScene, {c: CLOUD.conflict, back: scene}); return; }
+  // someone else on this account may be playing too: look again now and then, between games
+  if (T - CLOUD.checkT > 600 && cloudCalm() && !CLOUD.busy) { cloudCheck(); return; }
+  // keep the copy on GameJolt fresh: progress goes up within half a minute (play time rides along with it)
+  if (T - CLOUD.fpT > 5) { CLOUD.fpT = T; CLOUD.changed = cloudDirty(); }
+  if (CLOUD.changed && T - CLOUD.lastUp > 20) cloudUpload();
+}
+function cloudFlush() { if (gjUser() && CLOUD.checked && !CLOUD.conflict && !CLOUD.busy && cloudDirty()) cloudUpload(true); }
+function cloudReset() { Object.assign(CLOUD, {checked: false, busy: false, tryT: -99, conflict: null, adopt: null, status: "", syncedAt: 0, snooze: false, seen: {}}); }
+
+function cloudStatus() {
+  if (!gjUser()) return "LOG IN TO KEEP YOUR SAVE ON GAMEJOLT TOO";
+  if (CLOUD.status) return CLOUD.status;
+  if (CLOUD.conflict) return "TWO DIFFERENT SAVES: CHOOSE ONE FROM THE TITLE SCREEN";
+  if (!CLOUD.syncedAt) return "CLOUD SAVE: ON";
+  const m = Math.floor((Date.now() - CLOUD.syncedAt) / 60000);
+  return "SAVE BACKED UP TO GAMEJOLT " + (m < 1 ? "JUST NOW" : m + (m === 1 ? " MINUTE" : " MINUTES") + " AGO");
+}
+
+// after loading another device's save: say so, and tidy up this device's old player entry
+(function cloudAfterReload() {
+  try {
+    const msg = sessionStorage.getItem("riposte.cloudmsg"), old = sessionStorage.getItem("riposte.oldpid");
+    sessionStorage.removeItem("riposte.cloudmsg"); sessionStorage.removeItem("riposte.oldpid");
+    if (msg) setTimeout(() => toast(msg, C.li), 900);
+    if (msg) { CLOUD.checked = true; CLOUD.syncedAt = Date.now(); }
+    if (old && gjReady()) setTimeout(() => gjCall("data-store/remove", {key: "p_" + old}).catch(() => {}), 3000);
+  } catch (e) {}
+})();
+
+/* ---------------- two saves: pick one ---------------- */
+function saveSummary(m) {
+  const ach = Object.keys(m.ach || {}).filter(id => ACH_BY[id]).length, st = m.stats || {};
+  return [["TIME PLAYED", fmtPlayTime(st.activeTime || m.playTime || 0)], ["TOKENS", String(m.tokens || 0)],
+    ["TROPHIES", ach + "/" + ACH.length], ["ARCADE BEST", String(st.bestScore || 0)],
+    ["DESCENTS WON", String(st.wins || 0)], ["TAPES FOUND", String(Object.keys(m.logs || {}).length)]];
+}
+function whenText(t) {
+  if (!t) return "-";
+  const d = new Date(t);
+  return String(d.getDate()).padStart(2, "0") + " " + ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"][d.getMonth()] +
+    " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+const CloudScene = {
+  enter(o) { this.c = o.c; this.backTo = o.back && o.back !== CloudScene ? o.back : TitleScene; this.armed = null; this.sel = 0; music("map"); },
+  back() { CLOUD.snooze = true; go(this.backTo); },
+  pick(which) {
+    if (this.armed !== which || T - this.armedT > 3) { this.armed = which; this.armedT = T; sfx.deny(); return; }
+    if (which === "cloud") { CLOUD.conflict = null; cloudAdopt(this.c); }
+    else { CLOUD.conflict = null; CLOUD.snooze = false; cloudUpload(false, true).then(ok => toast(ok ? "THIS DEVICE'S SAVE IS NOW ON GAMEJOLT" : "COULDN'T REACH GAMEJOLT", ok ? C.li : C.rd)); go(this.backTo); }
+  },
+  draw() {
+    menuBg(PALS.grid);
+    title("TWO SAVES", 8, C.ye);
+    wrap("YOUR GAMEJOLT ACCOUNT HAS A SAVE FROM ANOTHER DEVICE, AND THIS DEVICE HAS PROGRESS OF ITS OWN. KEEP ONE: THE OTHER GETS REPLACED.", 340)
+      .forEach((l, i) => txt(l, W / 2, 28 + i * 8, C.lg, 1, "c"));
+    const cols = [["THIS DEVICE (" + deviceLabel() + ")", meta, meta.saveT, 8, C.bl], ["GAMEJOLT (" + (this.c.dev || "?") + ")", this.c.meta, this.c.saved || this.c.t, 196, C.pk]];
+    for (const [head, m, t, x, col] of cols) {
+      panel(x, 50, 180, 124, col);
+      txt(head, x + 90, 55, col, 1, "c");
+      txt("LAST SAVED " + whenText(t), x + 90, 66, C.gy, 1, "c");
+      saveSummary(m).forEach(([k, v], i) => { txt(k, x + 8, 82 + i * 14, C.lg); txt(v, x + 172, 82 + i * 14, C.wh, 1, "r"); });
+    }
+    beginItems(this);
+    const armed = this.armed && T - this.armedT < 3;
+    btn(this, armed && this.armed === "local" ? "SURE? TAP AGAIN" : "KEEP THIS ONE", 8, 180, 180, 13, () => this.pick("local"), {col: C.bl});
+    btn(this, armed && this.armed === "cloud" ? "SURE? TAP AGAIN" : "LOAD THIS ONE", 196, 180, 180, 13, () => this.pick("cloud"), {col: C.pk});
+    btn(this, "DECIDE LATER", W / 2 - 50, 200, 100, 12, () => this.back(), {col: C.gy});
+    endItems(this);
+    txt("UNTIL YOU CHOOSE, NOTHING IS BACKED UP.", W / 2, 222, C.gy, 1, "c");
+  }
+};
+/* ================================================================
+   Difficulty and the GAME MODES screen
+   One setting, five steps. It scales how fast enemies fire and how
+   fast their shots fly, how tough they are, how wide your shield is,
+   how many lives you start with, and how much warning you get before
+   a guardian's shove or a live corner. Arcade scores are multiplied to
+   match, so the online boards stay fair. The daily run is always
+   NORMAL, so everyone plays the same game. A descent keeps the
+   difficulty it started with.
+   ================================================================ */
+const DIFFS = [
+  {n: "VERY EASY", tag: "VE", col: C.li, diff: 0.72, hp: 0.75, arc: 1.25, lives: 2,  score: 0.25, wind: 1.6,  corner: 2,
+   d: "SLOW SHOTS, A WIDE SHIELD, 2 EXTRA LIVES"},
+  {n: "EASY",      tag: "E",  col: C.bl, diff: 0.86, hp: 0.9,  arc: 1.12, lives: 1,  score: 0.5,  wind: 1.3,  corner: 1.5,
+   d: "SLOWER SHOTS, A WIDER SHIELD, 1 EXTRA LIFE"},
+  {n: "NORMAL",    tag: "",   col: C.wh, diff: 1,    hp: 1,    arc: 1,    lives: 0,  score: 1,    wind: 1,    corner: 1,
+   d: "THE GAME AS IT WAS MADE"},
+  {n: "HARD",      tag: "H",  col: C.or, diff: 1.14, hp: 1.15, arc: 0.94, lives: 0,  score: 1.5,  wind: 0.85, corner: 0.8,
+   d: "FASTER SHOTS, TOUGHER ENEMIES, A NARROWER SHIELD"},
+  {n: "VERY HARD", tag: "VH", col: C.rd, diff: 1.28, hp: 1.3,  arc: 0.88, lives: -1, score: 2,    wind: 0.7,  corner: 0.65,
+   d: "ONE LIFE LESS. EVERYTHING HITS FASTER AND HARDER."}
+];
+const DIFF_NORMAL = 2;
+function diffLevel() { const v = meta.settings.diff; return v == null ? DIFF_NORMAL : clamp(v | 0, 0, DIFFS.length - 1); }
+function setDiff(v) { meta.settings.diff = clamp(v, 0, DIFFS.length - 1); saveMeta(); sfx.move(); }
+// the level a fight is played at: arcade uses the setting, a descent the level it started on, everything else NORMAL
+function fightDiff(mode) {
+  if (mode === "arcade") return diffLevel();
+  if (mode === "run" && typeof run !== "undefined" && run && !run.daily && run.dl != null) return run.dl;
+  return DIFF_NORMAL;
+}
+const DLV = () => DIFFS[G && G.dl != null ? G.dl : DIFF_NORMAL];
+const scoreMulText = d => "X" + (d.score % 1 ? d.score.toFixed(2).replace(/0$/, "") : d.score);
+
+/* ---------------- the slider, shared by GAME MODES and the settings row ---------------- */
+function drawDiffSlider(x, y, w, lv, selected) {
+  const n = DIFFS.length, sw = Math.floor((w - (n - 1) * 3) / n);
+  R(x - 2, y - 2, w + 4, 12, C.ink);                // a dark strip, so the blocks read on a highlighted row too
+  for (let i = 0; i < n; i++) {
+    const on = i <= lv, sx = x + i * (sw + 3);
+    R(sx, y, sw, 8, on ? DIFFS[i].col : C.ink);
+    RO(sx, y, sw, 8, on ? DIFFS[i].col : selected ? C.gy : C.nv);
+  }
+  return sw;
+}
+
+/* ---------------- GAME MODES ---------------- */
+const ModesScene = {
+  back() { go(TitleScene); },
+  enter() { music("map"); this.saved = loadRun(); this.newArmed = 0; this.sel = this.sel || 0; },
+  key(k) {
+    if (this.sel === 0 && (k === "arrowleft" || k === "a")) { setDiff(diffLevel() - 1); return true; }
+    if (this.sel === 0 && (k === "arrowright" || k === "d")) { setDiff(diffLevel() + 1); return true; }
+    return false;
+  },
+  // tapping a block of the slider picks that level
+  click(x, y) {
+    if (y < 34 || y > 44 || x < 120 || x > 372) return false;
+    const sw = (252 - 12) / 5, i = Math.floor((x - 120) / (sw + 3));
+    if (i >= 0 && i < DIFFS.length) { setDiff(i); this.sel = 0; }
+    return true;
+  },
+  confirmNew() {
+    if (this.newArmed && T - this.newArmed < 3) {
+      this.newArmed = 0;
+      run = this.saved; if (run) endRun("dead");
+      this.saved = null; beginDescent();
+    } else { this.newArmed = T; sfx.deny(); fxWobble(0.3); }
+  },
+  card(label, desc, side, y, col, act, o) {
+    o = o || {};
+    const s = btn(this, null, 8, y, o.w || 368, 30, act, {col, dim: C.nv});
+    txt(label, 18, y + 7, s ? C.k : col, 1);
+    txt(desc, 18, y + 18, s ? C.k : C.lg, 1);
+    if (side) txt(side, (o.w || 368) + 2, y + 7, s ? C.k : o.sideCol || C.gy, 1, "r");
+    return s;
+  },
+  draw() {
+    menuBg(PALS.grid);
+    title("GAME MODES", 8, C.li);
+    beginItems(this);
+    // difficulty
+    const lv = diffLevel(), D = DIFFS[lv];
+    const s0 = btn(this, null, 8, 28, 368, 32, () => setDiff((lv + 1) % DIFFS.length), {col: C.wh, dim: C.nv});
+    txt("DIFFICULTY", 18, 36, s0 ? C.k : C.lg);
+    drawDiffSlider(120, 34, 252, lv, s0);
+    txt(D.n + "  ~  ARCADE SCORES " + scoreMulText(D), 18, 50, s0 ? C.k : D.col);
+    txt(D.d, 372, 50, s0 ? C.k : C.gy, 1, "r");
+    // the modes
+    const sv = this.saved && !this.saved.daily ? this.saved : null;
+    let y = 68;
+    if (sv) {
+      const armed = this.newArmed && T - this.newArmed < 3;
+      this.card("CONTINUE DESCENT", "DEPTH " + sv.depth + "  ~  " + DIFFS[sv.dl != null ? sv.dl : DIFF_NORMAL].n, "", y, C.li, () => { run = sv; go(RunMap); }, {w: 296});
+      btn(this, armed ? "SURE?" : "NEW", 308, y, 68, 30, () => this.confirmNew(), {col: armed ? C.rd : C.wh});
+    } else this.card("DESCENT", "FIGHT DOWN THROUGH THE DEPTHS. MODS, CURSES, GUARDIANS.", meta.stats.bestDepth ? "DEEPEST " + meta.stats.bestDepth : "", y, C.li, beginDescent);
+    y += 36;
+    const dd = dailyToday();
+    this.card("DAILY RUN", "ONE TRY A DAY, THE SAME SEED FOR EVERYONE. ALWAYS NORMAL.",
+      dd && dd.done ? "DONE: " + dd.score : this.saved && this.saved.daily ? "IN PROGRESS" : "", y, C.pk, () => go(DailyScene, ModesScene), {sideCol: C.pk});
+    y += 36;
+    const newbie = !meta.tutorialDone && !meta.stats.runs && !meta.arcade.length;
+    this.card("TRAINING", "LEARN THE MOVES, ONE AT A TIME.", newbie && Math.floor(T * 2) % 2 ? "START HERE" : "", y, C.bl, () => go(TrainingScene), {sideCol: C.bl});
+    btn(this, "BACK", W / 2 - 40, 212, 80, 12, () => this.back(), {col: C.gy});
+    endItems(this);
+    if (this.newArmed && T - this.newArmed < 3) txt("THIS ABANDONS YOUR RUN. PRESS AGAIN.", W / 2, 202, C.rd, 1, "c");
+    else txt(ctl("LEFT / RIGHT CHANGES THE DIFFICULTY", "LEFT / RIGHT CHANGES THE DIFFICULTY", "TAP A BLOCK TO CHANGE THE DIFFICULTY"), W / 2, 202, C.gy, 1, "c");
+  }
+};
 /* ================================================================
    Workshop, records, codes, input, loop
    ================================================================ */
@@ -5414,7 +6045,7 @@ window.addEventListener("keyup", e => { if (e && typeof e.key === "string") keys
 window.addEventListener("blur", () => { for (const k in keys) keys[k] = false; if (inCombat() && G && !G.over) G.paused = true; });
 
 screenCv.addEventListener("pointermove", e => {
-  if (e.pointerType === "touch") { if (touchCombatOn()) { touchMove(e); return; } }
+  if (e.pointerType === "touch") { if (touchMode()) { touchMove(e); return; } }
   const p = toLo(e);
   if (Math.abs(p.x - mouse.x) + Math.abs(p.y - mouse.y) > 2) { lastInput = T; PAD.useAim = false; }
   mouse.x = p.x; mouse.y = p.y;
@@ -5427,7 +6058,8 @@ screenCv.addEventListener("pointerdown", e => {
   if (G) G.touch = lastPointerTouch;
   if (lastPointerTouch) touchFirstGesture();
   // thumbs in a fight: sticks and buttons
-  if (lastPointerTouch && touchCombatOn()) { touchDown(e); return; }
+  const tm = lastPointerTouch ? touchMode() : null;
+  if (tm) { touchDown(e, tm); return; }
   const p = toLo(e); mouse.x = p.x; mouse.y = p.y;
   if (inCombat() && G && !G.paused) { if (e.button === 2) doPulse(); return; }
   if (scene && scene.click && scene.click(p.x, p.y)) return;
@@ -5489,7 +6121,7 @@ function frame(now) {
 let updatePending = false, updateNoticed = false;
 function safeToReload() {
   return !modalOpen && [TitleScene, RunMap, WorkshopScene, RecordsScene, ArcadeOver, ShieldSelect, RunOver,
-    HubScene, CodexScene, HistoryScene, OnlineScene, DailyScene, SettingsScene, PlayersScene].includes(scene);
+    HubScene, CodexScene, HistoryScene, OnlineScene, DailyScene, SettingsScene, PlayersScene, ModesScene].includes(scene);
 }
 function applyUpdate() {
   updatePending = false;
