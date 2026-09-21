@@ -139,6 +139,7 @@ function startBasement() {
   const sh = meta.shields[meta.shield] ? meta.shield : "standard";
   startRun(sh, {});
   run.depth = 5; run.basement = true;
+  meta.stats.basements = (meta.stats.basements || 0) + 1; meta.flags.basement = 1; saveMeta();
   run.map = genBasementMap(); run.curId = null; run.pendingId = null;
   for (let i = 0; i < 2; i++) gainMod(rollMod("u"));
   run.maxLives++; run.lives = run.maxLives;
@@ -171,7 +172,7 @@ const MiloEnding = {
       "HE SAYS THANK YOU. HE SAYS IT'S NOT SO BAD IN HERE, ONCE YOU'RE GOOD.",
       "THE HIGH SCORE TABLE UPDATES. IT SAYS " + ini + ".",
       "IT WILL ALWAYS SAY " + ini + "."]).map(normText);
-    meta.milo = c; saveMeta();
+    meta.milo = c; meta.flags.endDay = todayStr(); saveMeta();
     unlockAch(c === "free" ? "laid" : "stay");
     if (c === "free") seq([523, 659, 784, 1047, 1319], 160, "triangle", 0.1, 0.5);
     else { tone(55, 1.2, "sawtooth", 0.14, 40); fxGlitch(0.8); }

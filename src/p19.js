@@ -11,6 +11,13 @@ function cleanName(s) {
 // the cabinet's own top 10 (and the share codes) keep classic 1-3 letter initials, taken from the name
 function nameInitials(n) { return cleanName(n).replace(/[^A-Z0-9]/g, "").slice(0, 3) || "AAA"; }
 function myName() { return meta.name || meta.initials || "PLAYER"; }
+// one name is already in use, and always will be
+const nameTaken = n => ["MILO", "MLO"].includes(cleanName(n).replace(/ /g, ""));
+function takenGlitch() {
+  sfx.deny(); fxGlitch(0.7); sfxGlitch(true);
+  if (hauntMode() > 0) { tone(41, 1, "sine", 0.18); setTimeout(() => whisper("MINE"), 400); }
+  loreSetFlag("nameTaken");
+}
 
 // one-time setup for this save: a hidden id so two players with the same name stay apart
 (function playersInit() {
@@ -67,6 +74,7 @@ const NameScene = {
   confirm() {
     const n = this.value();
     if (!n) { this.err = "TYPE A NAME FIRST."; sfx.deny(); return; }
+    if (nameTaken(n)) { this.err = "THAT NAME IS TAKEN."; this.letters = []; takenGlitch(); return; }
     sfx.select();
     setPlayerName(n);
     toast(this.change ? "NAME CHANGED TO " + n : "HELLO, " + n + ".", C.li);
@@ -118,6 +126,7 @@ const NameScene = {
     openModal("YOUR NAME", "UP TO " + NAME_MAX + " LETTERS AND NUMBERS. IT GOES ON THE ONLINE SCORE BOARDS.", this.letters.join(""), "OK", v => {
       const n = cleanName(v);
       if (!n) return modalMsg("TYPE A NAME FIRST.", true);
+      if (nameTaken(n)) { takenGlitch(); return modalMsg("THAT NAME IS TAKEN.", true); }
       this.letters = n.split(""); this.touched = true; this.err = "";
       closeModal();
     });

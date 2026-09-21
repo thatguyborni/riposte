@@ -1,26 +1,65 @@
 /* ================================================================
    Descent — content, run state, map generation
    ================================================================ */
+const MOD_SLOTS = 3;                 // you carry three mods at most
+const ROMAN = ["", "I", "II", "III"];
+// every mod has a kind, so a card says at a glance what it touches
+const MOD_KIND = {shield: ["SHIELD", C.ye], shots: ["SHOTS", C.bl], pulse: ["PULSE", C.la], move: ["MOVE", C.li],
+  armour: ["ARMOUR", C.lg], coins: ["COINS", C.or], risk: ["RISK", C.rd], odd: ["STRANGE", C.pk]};
 const MODS = {
-  wide:     {n:"WIDE GUARD",   r:"c", d:"SHIELD ARC +30%.", a:S => S.arc *= 1.3},
-  quick:    {n:"QUICK RETURN", r:"c", d:"RETURNED SHOTS FLY 25% FASTER.", a:S => { S.pMul *= 1.25; S.ppMul *= 1.25; }},
-  ricochet: {n:"RICOCHET",     r:"c", d:"RETURNED SHOTS BOUNCE OFF ONE MORE WALL.", a:S => { S.bounce++; S.pBounce++; }},
-  plating:  {n:"PLATING",      r:"c", d:"+1 MAX SHIELD, AND REPAIR 1.", g:r => { r.maxLives++; r.lives++; }},
-  magnet:   {n:"MAGNET",       r:"c", d:"THE CATCH ZONE IS 40% DEEPER.", a:S => { S.bandOut += 4; S.bandIn = Math.max(5, S.bandIn - 2); }},
-  capacitor:{n:"CAPACITOR",    r:"c", d:"PULSE RECHARGES 30% FASTER.", a:S => S.pulseCd *= 0.7},
-  salvage:  {n:"SALVAGE",      r:"c", d:"+40% COINS FROM EVERY FIGHT.", a:S => S.coinMul *= 1.4},
-  split:    {n:"SPLIT",        r:"u", d:"EVERY RETURNED SHOT SPLITS INTO ONE MORE.", a:S => S.split++},
-  seeker:   {n:"SEEKER",       r:"u", d:"RETURNED SHOTS HUNT MUCH HARDER.", a:S => { S.seekTurn *= 1.8; S.seek += 0.4; }},
-  pierce:   {n:"PIERCE",       r:"u", d:"SHOTS SURVIVE ONE HIT THAT DOESN'T KILL.", a:S => S.pierce++},
-  overclock:{n:"OVERCLOCK",    r:"u", d:"YOU MOVE 20% FASTER.", a:S => S.moveMul *= 1.2},
-  perfect:  {n:"PERFECTIONIST",r:"u", d:"THE PERFECT WINDOW IS WIDER.", a:S => S.perfectD += 2.5},
-  twin:     {n:"TWIN GUARD",   r:"r", d:"A SECOND, SMALLER SHIELD GUARDS YOUR BACK.", a:S => S.twin = true},
-  zap:      {n:"ARC LIGHTNING",r:"r", d:"EVERY KILL ZAPS THE NEAREST FOE.", a:S => S.zap++},
-  reflex:   {n:"REFLEX",       r:"r", d:"BULLET-TIME KICKS IN SOONER AND SLOWER.", a:S => S.reflex++},
-  glass:    {n:"GLASS HEART",  r:"r", d:"EVERY 5 PERFECTS REPAIRS A SHIELD. -1 MAX SHIELD.", a:S => S.glassHeal = true,
-             g:r => { r.maxLives = Math.max(1, r.maxLives - 1); r.lives = Math.min(r.lives, r.maxLives); }}
+  wide:     {n:"WIDE GUARD",   r:"c", k:"shield", d:"SHIELD ARC +30%.", a:S => S.arc *= 1.3},
+  quick:    {n:"QUICK RETURN", r:"c", k:"shots",  d:"RETURNED SHOTS FLY 25% FASTER.", a:S => { S.pMul *= 1.25; S.ppMul *= 1.25; }},
+  ricochet: {n:"RICOCHET",     r:"c", k:"shots",  d:"RETURNED SHOTS BOUNCE OFF ONE MORE WALL.", a:S => { S.bounce++; S.pBounce++; }},
+  plating:  {n:"PLATING",      r:"c", k:"armour", d:"+1 MAX SHIELD, AND REPAIR 1.", g:r => { r.maxLives++; r.lives++; }, u:r => { r.maxLives = Math.max(1, r.maxLives - 1); r.lives = Math.min(r.lives, r.maxLives); }},
+  magnet:   {n:"MAGNET",       r:"c", k:"shield", d:"THE CATCH ZONE IS 40% DEEPER.", a:S => { S.bandOut += 4; S.bandIn = Math.max(5, S.bandIn - 2); }},
+  capacitor:{n:"CAPACITOR",    r:"c", k:"pulse",  d:"PULSE RECHARGES 30% FASTER.", a:S => S.pulseCd *= 0.7},
+  salvage:  {n:"SALVAGE",      r:"c", k:"coins",  d:"+40% COINS FROM EVERY FIGHT.", a:S => S.coinMul *= 1.4},
+  anchor:   {n:"ANCHOR",       r:"c", k:"shield", d:"STAND STILL AND YOUR SHIELD GROWS 35% WIDER.", a:S => S.anchor++},
+  bulwark:  {n:"BULWARK",      r:"c", k:"armour", d:"+1 MAX SHIELD, BUT YOU MOVE 10% SLOWER.", a:S => S.moveMul *= 0.9,
+             g:r => { r.maxLives++; r.lives++; }, u:r => { r.maxLives = Math.max(1, r.maxLives - 1); r.lives = Math.min(r.lives, r.maxLives); }},
+  shockwave:{n:"SHOCKWAVE",    r:"c", k:"pulse",  d:"YOUR PULSE REACHES 30% FURTHER.", a:S => S.pulseR *= 1.3},
+  slipstream:{n:"SLIPSTREAM",  r:"c", k:"move",   d:"YOUR DASH RECHARGES 35% FASTER.", a:S => S.dashCd *= 0.65},
+  scatter:  {n:"SCATTERSHOT",  r:"c", k:"shots",  d:"PERFECT CATCHES THROW ONE EXTRA SHOT.", a:S => S.pSplit++},
+  cold:     {n:"COLD STEEL",   r:"c", k:"shots",  d:"ENEMIES YOUR SHOTS HIT ARE SLOWED FOR 2 SECONDS.", a:S => S.cold += 2},
+  interest: {n:"INTEREST",     r:"c", k:"coins",  d:"AFTER EACH FIGHT, EARN 10% OF YOUR COINS (UP TO 15).", a:S => S.interest++},
+  bounty:   {n:"BOUNTY",       r:"c", k:"coins",  d:"EVERY KILL DROPS ONE MORE COIN.", a:S => S.bounty++},
+  spotter:  {n:"SPOTTER",      r:"c", k:"odd",    max:1, d:"ENEMIES FLASH A WARNING RING JUST BEFORE THEY FIRE.", a:S => S.spotter = true},
+  mender:   {n:"SELF-REPAIR",  r:"c", k:"armour", max:1, d:"WIN A FIGHT WITHOUT A SCRATCH TO REPAIR 1 SHIELD.", a:S => S.mender = true},
+  split:    {n:"SPLIT",        r:"u", k:"shots",  d:"EVERY RETURNED SHOT SPLITS INTO ONE MORE.", a:S => S.split++},
+  seeker:   {n:"SEEKER",       r:"u", k:"shots",  d:"RETURNED SHOTS HUNT MUCH HARDER.", a:S => { S.seekTurn *= 1.8; S.seek += 0.4; }},
+  pierce:   {n:"PIERCE",       r:"u", k:"shots",  d:"SHOTS SURVIVE ONE HIT THAT DOESN'T KILL.", a:S => S.pierce++},
+  overclock:{n:"OVERCLOCK",    r:"u", k:"move",   d:"YOU MOVE 20% FASTER.", a:S => S.moveMul *= 1.2},
+  perfect:  {n:"PERFECTIONIST",r:"u", k:"shield", d:"THE PERFECT WINDOW IS WIDER.", a:S => S.perfectD += 2.5},
+  heavy:    {n:"HEAVY ROUNDS", r:"u", k:"shots",  d:"RETURNED SHOTS HIT 1 HARDER BUT FLY 20% SLOWER.", a:S => { S.dmg++; S.outMul *= 0.8; }},
+  longshot: {n:"LONGSHOT",     r:"u", k:"shots",  d:"SHOTS THAT TRAVEL FAR BEFORE THEY HIT DEAL +1.", a:S => S.longshot++},
+  stun:     {n:"STUN PULSE",   r:"u", k:"pulse",  d:"YOUR PULSE FREEZES NEARBY ENEMIES FOR 1.5 SECONDS.", a:S => S.stun += 1.5},
+  discharge:{n:"DISCHARGE",    r:"u", k:"pulse",  d:"YOUR PULSE HITS EVERY ENEMY IT REACHES FOR 1.", a:S => S.discharge++},
+  ram:      {n:"BATTERING RAM",r:"u", k:"move",   d:"DASHING THROUGH AN ENEMY HITS IT FOR 2.", a:S => S.ram += 2},
+  whirl:    {n:"WHIRLWIND",    r:"u", k:"move",   max:1, d:"WHILE YOU DASH, YOUR SHIELD COVERS EVERY SIDE.", a:S => S.whirl = true},
+  gravity:  {n:"GRAVITY WELL", r:"u", k:"shield", d:"ENEMY SHOTS NEAR YOU BEND TOWARD YOUR SHIELD.", a:S => S.gravity++},
+  laststand:{n:"LAST STAND",   r:"u", k:"risk",   max:1, d:"ON YOUR LAST SHIELD: A 40% WIDER ARC AND SHOTS HIT +1.", a:S => S.laststand = true},
+  leech:    {n:"LEECH",        r:"u", k:"armour", d:"EVERY 20 KILLS REPAIRS A SHIELD. LEVELS MAKE IT SOONER.", a:S => S.leech++},
+  momentum: {n:"MOMENTUM",     r:"u", k:"shots",  d:"YOUR COMBO LASTS LONGER. FROM 10 COMBO, SHOTS HIT +1.", a:S => S.momentum++},
+  berserk:  {n:"BERSERK",      r:"u", k:"risk",   d:"EVERY SHOT YOU RETURN HITS 1 HARDER. -1 MAX SHIELD.", a:S => S.dmg++,
+             g:r => { r.maxLives = Math.max(1, r.maxLives - 1); r.lives = Math.min(r.lives, r.maxLives); }, u:r => { r.maxLives++; }},
+  twin:     {n:"TWIN GUARD",   r:"r", k:"shield", max:1, d:"A SECOND, SMALLER SHIELD GUARDS YOUR BACK.", a:S => S.twin = true},
+  zap:      {n:"ARC LIGHTNING",r:"r", k:"shots",  d:"EVERY KILL ZAPS THE NEAREST FOE.", a:S => S.zap++},
+  reflex:   {n:"REFLEX",       r:"r", k:"odd",    d:"BULLET-TIME KICKS IN SOONER AND SLOWER.", a:S => S.reflex++},
+  glass:    {n:"GLASS HEART",  r:"r", k:"risk",   max:1, d:"EVERY 5 PERFECTS REPAIRS A SHIELD. -1 MAX SHIELD.", a:S => S.glassHeal = true,
+             g:r => { r.maxLives = Math.max(1, r.maxLives - 1); r.lives = Math.min(r.lives, r.maxLives); }, u:r => { r.maxLives++; }},
+  nova:     {n:"NOVA",         r:"r", k:"shots",  d:"A KILL WITH A RETURNED SHOT BURSTS INTO 4 MORE.", a:S => S.nova++},
+  satellite:{n:"SATELLITE",    r:"r", k:"shield", d:"A DRONE CIRCLES YOU AND EATS AN ENEMY SHOT EVERY FEW SECONDS.", a:S => S.sat++},
+  failsafe: {n:"FAILSAFE",     r:"r", k:"armour", d:"THE FIRST HIT OF EVERY FIGHT FIRES A FREE PULSE INSTEAD.", a:S => S.failsafe++},
+  stopwatch:{n:"STOPWATCH",    r:"r", k:"odd",    d:"PERFECT CATCHES SLOW THE WORLD FOR A MOMENT.", a:S => S.stopwatch++},
+  afterimage:{n:"AFTERIMAGE",  r:"r", k:"move",   max:1, d:"DASHING LEAVES A GHOST SHIELD BEHIND THAT CATCHES SHOTS.", a:S => S.afterimage = true},
+  cont:     {n:"CONTINUE?",    r:"r", k:"odd",    max:1, d:"IF YOUR LAST SHIELD BREAKS, PLAY ON WITH 1. THEN THIS MOD IS GONE.", a:S => S.cont = true}
 };
-const MOD_UNLOCK_COST = {pierce:60, overclock:60, perfect:80, reflex:100, glass:100, twin:120, zap:120};
+// mods you buy into the pool at the workbench (the rest are there from the start)
+const MOD_UNLOCK_COST = {spotter:40, interest:50, bounty:50, pierce:60, overclock:60, mender:70, heavy:70, berserk:70,
+  perfect:80, longshot:80, momentum:80, stun:80, ram:80, discharge:90, whirl:90, gravity:90, laststand:90, leech:90,
+  reflex:100, glass:100, twin:120, zap:120, stopwatch:130, nova:140, failsafe:140, satellite:150, afterimage:150};
+// mods that only turn up by finding something
+const MOD_SECRET = {cont: "SOMETHING IN THE BACK ROOM KNOWS WHERE IT IS."};
 const RAR_COL = {c:C.lg, u:C.bl, r:C.or};
 const RAR_NAME = {c:"COMMON", u:"UNCOMMON", r:"RARE"};
 const MOD_PRICE = {c:40, u:65, r:100};
@@ -79,7 +118,31 @@ function runStats() {
   return S;
 }
 function ownedMods() { return Object.keys(run.mods).filter(k => run.mods[k] > 0); }
+const modLv = id => (run && run.mods[id]) || 0;
+const modMax = id => (MODS[id] && MODS[id].max) || 3;
+const modName = id => MODS[id].n + (modLv(id) > 1 ? " " + ROMAN[modLv(id)] : "");
+const slotsFull = () => ownedMods().length >= MOD_SLOTS;
+const tuneable = () => ownedMods().filter(id => modLv(id) < modMax(id));
+// what taking this mod would do right now: a new slot, a level up, a swap, or nothing (already maxed)
+function modFate(id) {
+  const lv = modLv(id);
+  if (lv) return lv >= modMax(id) ? "max" : "up";
+  return slotsFull() ? "swap" : "new";
+}
 function gainMod(id) {
+  const fate = modFate(id);
+  if (fate === "max") { run.coins += 20; setTimeout(() => toast(MODS[id].n + " IS ALREADY MAXED. +20 COINS", C.ye), 200); return fate; }
+  if (fate === "swap") {
+    // slots are full: the player chooses what to drop next time the map comes up
+    if (!Array.isArray(run.pendingMods)) run.pendingMods = [];
+    run.pendingMods.push(id); saveRun();
+    return fate;
+  }
+  equipMod(id);
+  if (fate === "up") setTimeout(() => toast(MODS[id].n + " IS NOW LEVEL " + ROMAN[modLv(id)], RAR_COL[MODS[id].r]), 200);
+  return fate;
+}
+function equipMod(id) {
   const before = activeSynergies().map(s => s.id);
   run.mods[id] = (run.mods[id] || 0) + 1;
   if (MODS[id].g) MODS[id].g(run);
@@ -93,13 +156,43 @@ function gainMod(id) {
   }
   saveMeta();
 }
-function loseMod(id) { if (run.mods[id]) { run.mods[id]--; if (!run.mods[id]) delete run.mods[id]; } }
+// drop one level of a mod, or all of it
+function loseMod(id, all) {
+  let n = all ? (run.mods[id] || 0) : Math.min(1, run.mods[id] || 0);
+  while (n-- > 0) { run.mods[id]--; if (MODS[id] && MODS[id].u) MODS[id].u(run); }
+  if (!(run.mods[id] > 0)) delete run.mods[id];
+}
+function swapMod(out, inn) { loseMod(out, true); equipMod(inn); }
+// runs saved before slots existed: keep the best three, and ask about the rest
+function normalizeRunMods(r) {
+  if (!r.mods || typeof r.mods !== "object") r.mods = {};
+  if (!Array.isArray(r.pendingMods)) r.pendingMods = [];
+  r.pendingMods = r.pendingMods.filter(id => MODS[id]);
+  for (const id of Object.keys(r.mods)) {
+    if (!MODS[id] || !(r.mods[id] > 0)) { delete r.mods[id]; continue; }
+    const mx = MODS[id].max || 3;
+    while (r.mods[id] > mx) { r.mods[id]--; if (MODS[id].u) MODS[id].u(r); }
+  }
+  const ids = Object.keys(r.mods);
+  if (ids.length > MOD_SLOTS) {
+    const RW = {c: 0, u: 1, r: 2};
+    ids.sort((a, b) => (r.mods[b] - r.mods[a]) || (RW[MODS[b].r] - RW[MODS[a].r]));
+    for (const id of ids.slice(MOD_SLOTS)) {
+      for (let n = r.mods[id]; n > 0; n--) if (MODS[id].u) MODS[id].u(r);
+      delete r.mods[id];
+      if (!r.pendingMods.includes(id)) r.pendingMods.push(id);
+    }
+  }
+  return r;
+}
 function rollMod(minR, exclude) {
-  exclude = exclude || [];
+  exclude = (exclude || []).concat(run ? ownedMods().filter(id => modLv(id) >= modMax(id)) : []);
   let pool = (run && run.daily ? Object.keys(MODS) : meta.unlocked).filter(id => MODS[id] && !exclude.includes(id));
   if (minR === "u") pool = pool.filter(id => MODS[id].r !== "c");
-  if (minR === "r") pool = Object.keys(MODS).filter(id => MODS[id].r === "r" && !exclude.includes(id));
+  if (minR === "r") pool = Object.keys(MODS).filter(id => MODS[id].r === "r" && !exclude.includes(id) && (!MOD_SECRET[id] || meta.unlocked.includes(id) || (run && run.daily)));
+  if (minR === "c") pool = pool.filter(id => MODS[id].r === "c").concat([]);
   if (!pool.length) pool = meta.unlocked.filter(id => MODS[id] && !exclude.includes(id));
+  if (!pool.length) pool = Object.keys(MODS).filter(id => !exclude.includes(id));
   if (!pool.length) pool = Object.keys(MODS);
   const wt = {c:60, u:30, r:10};
   if (minR === "u") { wt.u = 75; wt.r = 25; }
@@ -201,7 +294,7 @@ function availNodes() {
 /* ---------------- run lifecycle ---------------- */
 function startRun(shield, opts) {
   opts = opts || {};
-  run = {depth: 1, shield, lives: 3, maxLives: 3, coins: 0, mods: {}, lens: false,
+  run = {depth: 1, shield, lives: 3, maxLives: 3, coins: 0, mods: {}, pendingMods: [], leechK: 0, lens: false,
     kills: 0, perfects: 0, bosses: 0, bank: 0, revealed: {}, usedEvents: [], map: null, curId: null,
     pendingId: null, runPerf: 0, fights: 0, curses: [], asc: opts.daily ? 0 : (opts.asc || 0),
     daily: opts.daily || null, seed: opts.daily ? "daily:" + opts.daily : null, rs: null, grades: {S: 0, A: 0, B: 0, C: 0}};
@@ -235,6 +328,7 @@ function loadRun() {
     if (r.asc == null) r.asc = 0;
     if (!r.grades) r.grades = {S: 0, A: 0, B: 0, C: 0};
     if (!r.usedEvents) r.usedEvents = [];
+    normalizeRunMods(r);
     return r;
   } catch (e) { return null; }
 }
@@ -266,6 +360,7 @@ const BOSS_FOR = [null, "warden", "furnace", "hydra", "echo"];
 function endRun(kind) {
   const glass = run.shield === "glass";
   const won = kind === "win" || kind === "true" || kind === "free" || kind === "stay";
+  if (kind === "dead" && (run.basement || run.depth === 5)) { if (!meta.flags) meta.flags = {}; meta.flags.miloLoss = 1; }
   let t = run.bank + Math.floor(run.kills * 0.5) + Math.floor(run.perfects * 0.3);
   if (kind === "win") t += 60;
   if (kind === "true") t += 150;
@@ -311,7 +406,7 @@ function endRun(kind) {
   saveMeta(); clearRun(); checkTapes();
   try { if (typeof onlineEvent === "function") onlineEvent(); } catch (e) {}
   const summary = {kind, tokens: t, depth: run.depth, kills: run.kills, perfects: run.perfects, bosses: run.bosses,
-    mods: ownedMods().map(id => MODS[id].n + (run.mods[id] > 1 ? " X" + run.mods[id] : "")), unlocks: unlocks.concat(extra), glass,
+    mods: ownedMods().map(modName), unlocks: unlocks.concat(extra), glass,
     asc: run.asc || 0, curses: nCurse, daily: run.daily, dailyScore, grades: run.grades};
   run = null;
   return summary;
@@ -334,8 +429,8 @@ const EVENTS = [
     {l:"SCAVENGE THE TOP", go:() => { run.coins += 25; return "+25 COINS."; }},
     {l:"DIG DEEPER (-1 SHIELD)", go:() => { hurtRun(1); const m = rollMod(); gainMod(m); return "SOMETHING BITES. YOU PULL OUT " + MODS[m].n + "."; }}]},
   {id:"tuner", t:"THE TUNER", b:"A FIGURE WITH A SOLDERING IRON OFFERS TO WORK ON YOUR GEAR. FOR FREE, APPARENTLY.", c:[
-    {l:"TUNE A MOD", req:() => ownedMods().length > 0, go:() => { const m = rpick(ownedMods()); gainMod(m); return MODS[m].n + " TUNED. IT STACKS AGAIN."; }},
-    {l:"SELL A MOD (+50 COINS)", req:() => ownedMods().length > 0, go:() => { const m = rpick(ownedMods()); loseMod(m); run.coins += 50; return "SOLD " + MODS[m].n + ". +50 COINS."; }},
+    {l:"TUNE A MOD", req:() => tuneable().length > 0, go:() => { const m = rpick(tuneable()); equipMod(m); return MODS[m].n + " TUNED. IT IS LEVEL " + ROMAN[modLv(m)] + " NOW."; }},
+    {l:"SELL A MOD (+40 A LEVEL)", req:() => ownedMods().length > 0, go:() => { const m = rpick(ownedMods()), c = 40 * modLv(m); loseMod(m, true); run.coins += c; return "SOLD " + MODS[m].n + ". +" + c + " COINS. THE SLOT IS EMPTY."; }},
     {l:"DECLINE", go:() => "THE IRON COOLS."}]},
   {id:"lens", t:"THE GLASS EYE", b:"A GLASS EYE RESTS ON A PEDESTAL. LOOKING THROUGH IT, THE MAP IS NOT QUITE THE SAME.", cond:() => !run.lens && meta.upg.carto === 0, c:[
     {l:"TAKE IT (-1 MAX SHIELD)", go:() => { run.lens = true; run.maxLives = Math.max(1, run.maxLives - 1); run.lives = Math.min(run.lives, run.maxLives); return "HIDDEN ROOMS WILL SHOW ON THE MAP FOR THE REST OF THIS RUN."; }},

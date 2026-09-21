@@ -1,5 +1,5 @@
 "use strict";
-const VERSION = "4.6.0";
+const VERSION = "4.7.0";
 /* ================================================================
    RIPOSTE v3 — core: screen, font, sprites, audio, save
    ================================================================ */
@@ -618,21 +618,25 @@ function musicTick() {
 
 /* ---------------- save / meta ---------------- */
 const SAVE_KEY = "riposte.v3.meta", RUN_KEY = "riposte.v3.run";
+// mods that joined the free pool in 4.7
+const FREE_47 = ["anchor", "bulwark", "shockwave", "slipstream", "scatter", "cold"];
 function freshMeta() {
   return {
     v: 3, tokens: 0, earned: 0,
-    unlocked: ["wide","quick","ricochet","plating","magnet","capacitor","salvage","split","seeker"],
+    unlocked: ["wide","quick","ricochet","plating","magnet","capacitor","salvage","split","seeker"].concat(FREE_47),
     shields: {standard:true, buckler:false, tower:false, glass:false, mirror:false, signal:false},
     shield: "standard",
     upg: {plate:0, change:0, coolant:0, lucky:0, carto:0},
     fragments: [false, false, false, false, false],
     secrets: {vault1:false, vault2:false, vault3:false, untouched:false, static:false, mirror:false, signal:false, echo:false},
     stats: {runs:0, wins:0, bestDepth:0, kills:0, perfects:0, trueEnd:0, mines:0, bestWave:0,
-      arcadeGames:0, dailies:0, bestScore:0, bestScoreWave:0, activeTime:0, bestRun:null},
+      arcadeGames:0, dailies:0, bestScore:0, bestScoreWave:0, activeTime:0, bestRun:null,
+      catches:0, catchL:0, catchR:0, sessions:0, basements:0},
     arcade: [], initials: "AAA", name: "", pid: "", sent: {}, saveT: 0, cloud: {},
     seen: {}, ach: {}, history: [], npcs: {}, asc: 0, daily: null, dailyBest: 0, dailyFriends: [],
     synSeen: {}, modsSeen: {}, tutorialDone: false, hubSeen: false, gj: null, migr4: false,
     logs: {}, tapesDue: {}, flags: {}, playTime: 0, hauntSeen: false, milo: "",
+    lore: {}, loreDue: {}, hrs: new Array(24).fill(0), firstSeen: 0,
     settings: {sound: 2, crt: true, fullscreen: false, vol: 8, musVol: 8, sfxVol: 8, curve: 2, tint: 0,
       phosphor: true, shake: true, effects: 2, rumble: true, haunt: 2,
       taim: 0, tsize: 1, tfs: true, diff: 2}
@@ -663,6 +667,8 @@ function loadMeta() {
   if (!Array.isArray(m.arcade)) m.arcade = [];
   m.arcade = m.arcade.filter(e => e && typeof e.s === "number").slice(0, 10);
   migrate4(m);
+  if (!m.flags) m.flags = {};
+  if (!m.flags.pool47) { m.flags.pool47 = 1; for (const k of FREE_47) if (!m.unlocked.includes(k)) m.unlocked.push(k); }
   return m;
 }
 // saves from before 4.0: credit what the player had clearly already done

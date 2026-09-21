@@ -68,6 +68,7 @@ function checkTapes() {
     saveMeta();
     setTimeout(() => toast(fresh > 1 ? fresh + " TAPES WERE LEFT IN THE BACK ROOM." : "A TAPE WAS LEFT IN THE BACK ROOM.", C.pl), 700);
   }
+  checkLore();
 }
 
 /* ---------------- how haunted are we ---------------- */
@@ -133,6 +134,7 @@ function hauntTick(dt) {
   } else HT.hb = 0.3;
   if (meta && !isNaN(dt)) {
     meta.playTime = (meta.playTime || 0) + dt;
+    loreTick(dt);
     HT.save = (HT.save || 0) + dt;
     if (HT.save > 30) { HT.save = 0; saveMeta(); }
   }
@@ -186,9 +188,11 @@ function bootLines() {
     ["CPU", "OK"], ["WORK RAM 64K", "OK"], ["VIDEO 384X240", "OK"], ["SOUND CHIP", "OK"],
     ["SHIELD CALIBRATION", "OK"], ["CHECKING ROM", "OK"], ["LOADING DEPTHS 1-3", "OK"]];
   const h = hauntLevel();
-  if (meta.milo === "free") { lines.push(["PLAYERS DETECTED", "1"], ["SIGNAL", "QUIET"]); return lines; }
-  if (meta.milo === "stay") { lines.push(["PLAYERS DETECTED", "1"], ["SIGNAL", meta.initials || "YOU"]); return lines; }
-  if (h >= 1 && hauntMode() > 0) lines.push(["PLAYERS DETECTED", "2"]);
+  // after the last B-side, somebody else is in there too
+  const extra = hauntMode() > 0 && loreRead("b8") ? 1 : 0;
+  if (meta.milo === "free") { lines.push(["PLAYERS DETECTED", String(1 + extra)], ["SIGNAL", extra ? "D.O." : "QUIET"]); return lines; }
+  if (meta.milo === "stay") { lines.push(["PLAYERS DETECTED", String(1 + extra)], ["SIGNAL", meta.initials || "YOU"]); return lines; }
+  if (h >= 1 && hauntMode() > 0) lines.push(["PLAYERS DETECTED", String(2 + extra)]);
   lines.push(["SIGNAL", h >= 3 && hauntMode() > 0 ? "I SEE YOU" : "???"]);
   return lines;
 }

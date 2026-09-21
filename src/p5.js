@@ -93,7 +93,7 @@ function drawPlayer() {
   L.globalAlpha = 1;
   if (!blink) drawSpr(SPR.player, p.x, p.y, p.flash > 0);
   const arc = curArc();
-  const col = p.flash > 0 ? C.wh : (G.buff === "wide" ? C.bl : C.ye);
+  const col = p.flash > 0 ? C.wh : (G.buff === "wide" ? C.bl : lastStand() ? C.or : C.ye);
   if (!blink) {
     arcPx(p.x, p.y, 13, p.aim - arc, p.aim + arc, col, 2);
     for (const s of [-1, 1]) {
@@ -142,6 +142,7 @@ function drawCombat(opts) {
     }
   }
   for (const b of G.bullets) drawBullet(b);
+  drawModFx();
   drawPlayer();
   L.restore();
   if (G.dark) drawDarkness();
@@ -180,7 +181,7 @@ function drawHud() {
     txt("COINS", x, 2, C.gy); txt("$" + (run.coins + Math.round(G.coinsGot * G.S.coinMul)), x, 8, C.ye); x += 30;
     txt("DEPTH", x, 2, C.gy); txt(run.depth + "~" + (G.pal.name.replace("THE ", "")), x, 8, C.wh); x += 64;
   }
-  txt("CHAIN", x, 2, C.gy);
+  txt(G.mode !== "attract" && haunted(4) && scaresOn() && G.t % 83 > 82.7 ? "AGAIN" : "CHAIN", x, 2, C.gy);
   const pulseC = G.combo > 1 && G.comboT > 2.9;
   txt("X" + G.combo, x, 8, G.combo >= 10 ? (Math.floor(T * 8) % 2 ? C.ye : C.or) : G.combo > 1 ? (pulseC ? C.wh : C.bl) : C.wh);
   if (G.combo > 1) { R(x + 12, 10, 12, 2, C.nv); R(x + 12, 10, Math.round(12 * clamp(G.comboT / 3.2, 0, 1)), 2, C.bl); }
@@ -189,7 +190,7 @@ function drawHud() {
   // right side
   heartRow(W - 12, 5, G.lives, G.maxLives, "r");
   const px0 = W - 12 - Math.min(8, Math.max(G.lives, G.maxLives)) * 6 - 36;
-  const dr = G.p.dashCd <= 0 ? 1 : 1 - G.p.dashCd / 1.1;
+  const dr = G.p.dashCd <= 0 ? 1 : 1 - G.p.dashCd / (1.1 * G.S.dashCd);
   txt("DASH", px0 - 26, 2, C.gy);
   R(px0 - 26, 9, 18, 3, C.nv); R(px0 - 26, 9, Math.round(18 * clamp(dr, 0, 1)), 3, dr >= 1 ? C.wh : C.la);
   txt("PULSE", px0, 2, C.gy);

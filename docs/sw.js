@@ -1,6 +1,6 @@
 // Riposte offline support. The game page is fetched fresh whenever there's a connection
 // (so updates arrive on the next launch) and served from the cache when there isn't.
-const CACHE = "riposte-4.6.0";
+const CACHE = "riposte-4.7.0";
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));

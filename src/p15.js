@@ -26,19 +26,27 @@ const HubScene = {
     const h = hauntLevel();
     const FIG = [[362, 66], [330, 96], [262, 150], [214, 118]];
     this.fig = haunted(2) && meta.flags && meta.flags.crash1 ? FIG[Math.min(3, Math.max(0, h - 2))] : null;
-    this.figGone = false; this.lightsT = 8 + rand() * 12; this.dark = 0; this.winT = 6 + rand() * 10; this.winFig = 0;
+    this.figGone = false; this.lightsT = 8 + rand() * 12; this.dark = 0; this.winT = 6 + rand() * 10; this.winFig = 0; this.p2T = 0;
+    this.posterName = haunted(4) && scaresOn() && rand() < 0.35;
     music(meta.milo === "free" ? "map" : haunted(3) ? "basement" : "map");
     if (!meta.hubSeen) { meta.hubSeen = true; saveMeta(); this.dialog = {who: null, text: "THE BACK ROOM. " + ctl("WALK UP TO THINGS AND PRESS ENTER.", "WALK UP TO THINGS AND PRESS A.", "DRAG ANYWHERE TO WALK. TAP THINGS (OR PRESS USE) TO USE THEM. THE X IN THE CORNER LEAVES.") + " EVERYTHING BEHIND THE CABINET LIVES HERE."}; }
   },
   back() { if (this.dialog) this.dialog = null; else go(TitleScene); },
   spots() {
     const out = HUB_SPOTS.slice();
-    const TS = [[128, 150], [176, 186], [236, 170], [96, 196], [276, 196], [150, 124]];
-    dueTapes().forEach((id, i) => {
+    const TS = [[128, 150], [176, 186], [236, 170], [96, 196], [276, 196], [150, 124], [206, 146], [70, 122], [320, 140], [180, 100], [120, 168], [240, 108]];
+    const floor = dueTapes().map(id => ({id: "tape" + id, n: "A TAPE", hint: "0417 ~ " + String(id).padStart(2, "0"), tape: id, act: () => go(TapeScene, {id, from: HubScene})}))
+      .concat(dueLore("b").map(id => ({id: "lore" + id, n: "A TAPE", hint: "0417 ~ B-SIDE " + loreNum(LORE_BY[id]), tape: "b", act: () => go(LoreScene, {id, from: HubScene})})))
+      .concat(scaresOn() ? [] : dueLore("p").map(id => ({id: "lore" + id, n: "A TAPE", hint: "LABELLED: INPUT 2", tape: "p", act: () => go(LoreScene, {id, from: HubScene})})));
+    floor.forEach((f, i) => {
       const [x, y] = TS[i % TS.length];
-      out.push({id: "tape" + id, n: "A TAPE", hint: "0417 ~ " + String(id).padStart(2, "0"), x, y: y + 2, box: [x - 5, y - 4, 10, 8], tape: id,
-        act: () => go(TapeScene, {id, from: HubScene})});
+      out.push(Object.assign(f, {x, y: y + 2, box: [x - 5, y - 4, 10, 8]}));
     });
+    // the corkboard, the cabinet's printer, and the poster by the door
+    const docs = loreOf("d").filter(e => loreRead(e.id) || loreDue(e.id)).length;
+    out.push({id: "cork", n: "CORKBOARD", hint: dueLore("d").length ? "SOMETHING NEW IS PINNED UP" : docs ? docs + " PAPER" + (docs > 1 ? "S" : "") : "EMPTY", x: 355, y: 60, box: [334, 20, 42, 24], act: () => this.useCork()});
+    if (dueLore("s").length) out.push({id: "receipt", n: "A RECEIPT", hint: "THE CABINET PRINTED IT BY ITSELF", x: 332, y: 76, box: [327, 58, 8, 16], act: () => go(LoreScene, {id: dueLore("s")[0], from: HubScene})});
+    out.push({id: "poster", n: "POSTER", hint: haunted(2) ? "MISSING" : "RIPOSTE", x: 280, y: 60, box: [270, 22, 20, 18], act: () => this.usePoster()});
     if (basementOpen()) out.push({id: "trap", n: "TRAPDOOR", hint: meta.milo === "free" ? "IT'S QUIET DOWN THERE NOW" : "IT GOES DOWN", x: 300, y: 196, box: [288, 186, 24, 16], act: () => this.enterBasement()});
     if (meta.milo === "free") out.push({id: "milo", n: "MILO", hint: "THE LAST PLAYER", x: 282, y: 124, box: [277, 112, 10, 14], act: () => this.talkMilo()});
     for (const n of NPCS) if (npcHere(n.id)) {
@@ -47,6 +55,30 @@ const HubScene = {
     }
     return out;
   },
+  useCork() {
+    const due = dueLore("d");
+    if (due.length) return go(LoreScene, {id: due[0], from: HubScene});
+    if (loreOf("d").some(e => loreRead(e.id))) { CodexScene.tab = "tapes"; CodexScene.cat = "d"; return go(CodexScene); }
+    this.dialog = {who: null, text: "AN EMPTY CORKBOARD. A FEW RUSTY PINS. SOMEBODY MEANT TO PUT THINGS UP HERE."};
+  },
+  usePoster() {
+    let text = "A FADED RIPOSTE POSTER. 'CATCH EVERYTHING. SEND IT BACK.'";
+    if (haunted(2)) text = "MISSING. MILO, 11. LAST SEEN 10 OCTOBER 1989. THE PHOTO IS JUST A BLACK SQUARE.";
+    if (this.posterName) {
+      this.posterName = false;
+      text = "MISSING. " + playerName() + ". LAST SEEN: HERE, " + dateStr() + ". THE PHOTO IS JUST A BLACK SQUARE.";
+      fxGlitch(0.6); sfxGlitch(true); tone(41, 1.1, "sine", 0.16);
+      setTimeout(() => { if (scene === HubScene && this.dialog) this.dialog.text = "MISSING. MILO, 11. LAST SEEN 10 OCTOBER 1989. THE PHOTO IS JUST A BLACK SQUARE."; fxGlitch(0.3); }, 1600);
+    }
+    this.dialog = {who: null, text};
+  },
+  touchWindow() {
+    this.winFig = 0; this.winT = 30 + rand() * 30; this.dark = 0.35;
+    tone(80, 0.12, "sine", 0.3); setTimeout(() => tone(76, 0.12, "sine", 0.3), 260); setTimeout(() => tone(72, 0.14, "sine", 0.26), 520);
+    fxGlitch(0.4);
+    loreSetFlag("winTouch");
+  },
+  nearWindow() { return Math.hypot(57 - this.px, 60 - this.py) < 34; },
   talkMilo() {
     const L2 = ["IT'S QUIET IN HERE NOW. I LIKE IT.", "I DON'T HAVE TO PLAY ANYMORE. I STILL WANT TO, SOMETIMES.",
       "THANK YOU FOR NOT LEAVING ME DOWN THERE.", "YOU'RE BETTER THAN ME NOW. DON'T TELL ANYONE.", "MY MOM USED TO SAY I'D PLAY UNTIL MY THUMBS FELL OFF. SHE WAS ALMOST RIGHT."];
@@ -88,7 +120,16 @@ const HubScene = {
     }
     if (haunted(1)) {
       this.winT -= dt;
-      if (this.winT <= 0) { this.winT = 14 + rand() * 20; this.winFig = 0.7; }
+      if (this.winT <= 0) { this.winT = 14 + rand() * 20; this.winFig = this.px < 130 && this.py < 110 ? 1.8 : 0.9; }
+    }
+    // INPUT 2 doesn't wait to be found: it plays itself when you come in
+    if (!this.dialog && scaresOn() && this.p2T >= 0) {
+      this.p2T += dt;
+      const id = this.p2T > 2.2 ? dueLore("p")[0] : null;
+      if (id) {
+        this.p2T = -1; this.dark = 0.8; sfxGlitch(true); fxGlitch(0.5); tone(46, 0.8, "sine", 0.18);
+        setTimeout(() => { if (scene === HubScene) go(LoreScene, {id, from: HubScene}); }, 700);
+      }
     }
     if (this.winFig > 0) this.winFig -= dt;
     if (this.fig && !this.figGone && Math.hypot(this.fig[0] - this.px, this.fig[1] - this.py) < 46) {
@@ -119,6 +160,7 @@ const HubScene = {
   key(k) {
     if (this.count) return true;
     if (this.dialog) { if (k === "enter" || k === " " || k === "e" || k === "escape") { this.dialog = null; sfx.move(); } return true; }
+    if ((k === "enter" || k === " " || k === "e") && this.winFig > 0 && this.nearWindow()) { this.touchWindow(); return true; }
     if (k === "enter" || k === " " || k === "e") {
       const s = this.nearest();
       if (s) { sfx.select(); fxGlitch(0.15); s.act(); } else sfx.deny();
@@ -129,6 +171,7 @@ const HubScene = {
   click(x, y) {
     if (this.count) return true;
     if (this.dialog) { this.dialog = null; return true; }
+    if (this.winFig > 0 && x >= 38 && x < 76 && y >= 18 && y < 40) { this.touchWindow(); return true; }
     for (const s of this.spots()) {
       const [bx, by, bw, bh] = s.box;
       if (x >= bx - 3 && x < bx + bw + 3 && y >= by - 3 && y < by + bh + 3) {
@@ -154,10 +197,25 @@ const HubScene = {
     else for (let i = 0; i < 8; i++) { const ry = 21 + ((T * 40 + i * 7) % 16); P(43 + i * 4, ry, C.bl); }
     if (this.winFig > 0 && scaresOn()) { R(60, 23, 5, 5, "#020104"); R(59, 28, 7, 10, "#020104"); }
     R(56, 20, 1, 18, C.la); R(40, 28, 34, 1, C.la);
-    // poster
-    R(270, 22, 20, 18, C.nv); txt("R", 277, 28, C.or); RO(270, 22, 20, 18, C.pl);
     const hot = this.nearest();
     const glow = s => hot && hot.id === s ? (Math.floor(T * 4) % 2 ? C.wh : C.ye) : null;
+    // poster: a RIPOSTE poster, until you know better
+    if (haunted(2)) {
+      R(270, 22, 20, 18, "#D8D0BC"); R(276, 24, 8, 8, "#050305");
+      R(272, 34, 16, 1, "#5F574F"); R(273, 37, 12, 1, "#5F574F");
+      if (this.posterName && Math.floor(T * 5) % 23 === 0) R(276, 24, 8, 8, C.rd);
+    } else { R(270, 22, 20, 18, C.nv); txt("R", 277, 28, C.or); RO(270, 22, 20, 18, C.pl); }
+    // corkboard, with whatever has been pinned to it
+    R(334, 20, 42, 24, "#6B4A2A"); RO(334, 20, 42, 24, "#3B2416");
+    loreOf("d").forEach((e, i) => {
+      if (!loreRead(e.id) && !loreDue(e.id)) return;
+      const qx = 337 + (i % 6) * 6.5, qy = 23 + Math.floor(i / 6) * 10 + (i % 2);
+      const unread = loreDue(e.id);
+      R(qx, qy, 5, 7, unread && Math.floor(T * 3) % 2 ? C.wh : e.id === "d9" ? "#F0E0B0" : "#E0D6C0");
+      P(qx + 2, qy, unread ? C.rd : C.pl);
+    });
+    if (glow("cork")) RO(332, 18, 46, 28, glow("cork"));
+    if (glow("poster")) RO(268, 20, 24, 22, glow("poster"));
     // workbench
     R(22, 52, 64, 16, "#3B2416"); R(22, 50, 64, 3, "#6B3F22"); R(26, 68, 4, 10, "#2A170D"); R(78, 68, 4, 10, "#2A170D");
     R(30, 44, 10, 6, C.gy); R(46, 46, 6, 4, C.or); P(60, 47, C.ye); P(64, 46, C.bl); R(70, 45, 8, 5, C.nv);
@@ -185,6 +243,12 @@ const HubScene = {
     R(304, 52, 20, 4, C.nv); P(308, 54, C.rd); P(318, 54, C.bl);
     if (dailyToday() && dailyToday().done) P(322, 48, C.li); else if (Math.floor(T * 3) % 2) P(322, 48, C.pk);
     if (glow("cab")) RO(298, 24, 32, 50, glow("cab"));
+    // the cabinet printed something
+    if (dueLore("s").length) {
+      const sway = Math.round(Math.sin(T * 2) * 0.6);
+      R(329 + sway, 58, 5, 14, "#EEE8DE"); for (let k = 0; k < 4; k++) R(330 + sway, 60 + k * 3, 3, 1, "#8A8494");
+      if (glow("receipt")) RO(326, 56, 11, 18, glow("receipt"));
+    }
     // training dummy
     R(343, 150, 2, 14, "#6B3F22"); R(338, 140, 12, 12, "#8A6A3A"); R(341, 143, 2, 2, C.k); R(345, 143, 2, 2, C.k); R(336, 164, 16, 2, "#6B3F22");
     if (glow("dummy")) RO(334, 138, 20, 30, glow("dummy"));
@@ -205,7 +269,7 @@ const HubScene = {
     }
     // tapes somebody left on the floor
     for (const s of this.spots()) if (s.tape) {
-      drawSpr(SPR.tape, s.x, s.y - 2);
+      drawSpr(s.tape === "b" ? loreSpr("b") : s.tape === "p" ? loreSpr("p") : SPR.tape, s.x, s.y - 2);
       if (Math.floor(T * 3) % 2) P(s.x + 4, s.y - 5, C.pk);
       if (glow(s.id)) RO(s.x - 6, s.y - 6, 13, 10, glow(s.id));
     }
@@ -261,7 +325,7 @@ const CodexScene = {
   },
   tabList() {
     const t = [["foes", "ENEMIES"], ["mods", "MODS"], ["syn", "SYNERGIES"], ["ach", "TROPHIES"]];
-    if (tapesRead() > 0) t.push(["tapes", "TAPES"]);
+    if (archiveCount() > 0) t.push(["tapes", "ARCHIVE"]);
     return t;
   },
   draw() {
@@ -289,21 +353,23 @@ const CodexScene = {
     } else if (this.tab === "mods") {
       const ids = Object.keys(MODS), ms = meta.modsSeen || {};
       ids.forEach((id, i) => {
-        const cx = 24 + (i % 2) * 170, cy = 42 + Math.floor(i / 2) * 15;
+        const cx = 24 + (i % 3) * 113, cy = 38 + Math.floor(i / 3) * 11;
         const known = ms[id];
-        const s = btn(this, known ? MODS[id].n : "???", cx, cy, 164, 12, () => {}, {col: known ? RAR_COL[MODS[id].r] : C.gy, dim: C.nv, align: "l"});
-        if (s) info = known ? RAR_NAME[MODS[id].r] + ": " + MODS[id].d : "NEVER HELD. " + (meta.unlocked.includes(id) ? "IT'S IN YOUR POOL." : "UNLOCK IT AT THE WORKBENCH.");
+        const s = btn(this, known ? MODS[id].n : "???", cx, cy, 110, 10, () => {}, {col: known ? RAR_COL[MODS[id].r] : C.gy, dim: C.nv, align: "l"});
+        if (s) info = known ? RAR_NAME[MODS[id].r] + " " + (MOD_KIND[MODS[id].k] || MOD_KIND.odd)[0] + ": " + MODS[id].d + (MODS[id].max === 1 ? " (ONE LEVEL)" : " (UP TO LEVEL III)")
+          : "NEVER HELD. " + (meta.unlocked.includes(id) ? "IT'S IN YOUR POOL." : MOD_SECRET[id] ? MOD_SECRET[id] : "UNLOCK IT AT THE WORKBENCH.");
       });
+      txt(Object.keys(ms).filter(k => MODS[k]).length + "/" + ids.length + " HELD", W - 24, 9, C.gy, 1, "r");
     } else if (this.tab === "syn") {
       const ss = meta.synSeen || {}, ms = meta.modsSeen || {};
       SYNERGIES.forEach((sy, i) => {
-        const cy = 42 + i * 22, known = ss[sy.id];
-        const s = btn(this, null, 24, cy, 336, 19, () => {}, {col: C.pk, dim: C.nv});
-        txt(known ? sy.n : "???", 30, cy + 4, s ? C.k : known ? C.pk : C.gy);
-        txt(sy.m.map(id => ms[id] ? MODS[id].n : "???").join(" + "), 354, cy + 4, s ? C.k : C.lg, 1, "r");
-        txt(known ? sy.d : "HOLD BOTH MODS AT ONCE TO FIND OUT.", 30, cy + 12, s ? C.k : C.gy);
+        const cx = 24 + (i % 2) * 170, cy = 38 + Math.floor(i / 2) * 17, known = ss[sy.id];
+        const s = btn(this, null, cx, cy, 166, 15, () => {}, {col: C.pk, dim: C.nv});
+        txt(known ? sy.n : "???", cx + 4, cy + 2, s ? C.k : known ? C.pk : C.gy);
+        txt(sy.m.map(id => ms[id] ? MODS[id].n : "???").join(" + "), cx + 4, cy + 9, s ? C.k : C.gy);
+        if (s) info = (known ? sy.d : "HOLD BOTH MODS AT ONCE TO FIND OUT.") + "  ~  SYNERGIES WORK IN DESCENT RUNS.";
       });
-      txt("SYNERGIES WORK IN DESCENT RUNS.", W / 2, 180, C.gy, 1, "c");
+      txt(Object.keys(ss).filter(k => SYNERGIES.some(x => x.id === k)).length + "/" + SYNERGIES.length + " FOUND", W - 24, 9, C.gy, 1, "r");
     } else if (this.tab === "ach") {
       const a = meta.ach || {};
       ACH.forEach((x, i) => {
@@ -316,15 +382,7 @@ const CodexScene = {
       });
       txt(achCount() + "/" + ACH.length, W - 24, 9, C.gy, 1, "r");
     } else if (this.tab === "tapes") {
-      for (let i = 1; i <= TAPE_COUNT; i++) {
-        const cx = 24 + ((i - 1) % 2) * 170, cy = 42 + Math.floor((i - 1) / 2) * 16;
-        const got = tapeRead(i);
-        const s = btn(this, null, cx, cy, 164, 13, () => { if (got) go(TapeScene, {id: i, from: CodexScene}); }, {col: got ? C.pk : C.gy, dim: C.nv, disabled: !got});
-        txt(String(i).padStart(2, "0"), cx + 4, cy + 4, s && got ? C.k : C.gy);
-        txt(got ? TAPES[i].h : tapeDue(i) ? "WAITING IN THE BACK ROOM" : "???", cx + 20, cy + 4, s && got ? C.k : got ? C.lg : C.gy);
-        if (s) info = got ? tapeDate(i) + "  ~  " + ctl("PRESS ENTER", "PRESS A", "TAP IT") + " TO PLAY IT AGAIN." : "NOT FOUND YET.";
-      }
-      txt(tapesRead() + "/" + TAPE_COUNT, W - 24, 9, C.gy, 1, "r");
+      info = drawArchive(this) || info;
     }
     btn(this, "BACK", W / 2 - 30, 226, 60, 11, () => this.back(), {col: C.gy});
     endItems(this);

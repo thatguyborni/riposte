@@ -42,9 +42,9 @@ function runText() { try { return localStorage.getItem(RUN_KEY) || ""; } catch (
 // what counts as progress: everything except play time, per-device settings and one-off tips
 function cloudFingerprint(m, runStr) {
   const c = {};
-  for (const k in m) if (!CLOUD_LOCAL[k] && k !== "playTime") c[k] = m[k];
+  for (const k in m) if (!CLOUD_LOCAL[k] && k !== "playTime" && k !== "hrs") c[k] = m[k];
   if (c.stats) { c.stats = Object.assign({}, c.stats); delete c.stats.activeTime; }
-  if (c.flags) { c.flags = Object.assign({}, c.flags); delete c.flags.iosHint; delete c.flags.cornerTip; delete c.flags.repelTip; }
+  if (c.flags) { c.flags = Object.assign({}, c.flags); delete c.flags.iosHint; delete c.flags.cornerTip; delete c.flags.repelTip; delete c.flags.lastSeen; }
   return hash(JSON.stringify(c) + "|" + (runStr || ""));
 }
 const cloudDirty = () => { const mine = cloudMine(); return mine.vv ? cloudFingerprint(meta, runText()) !== mine.fp : !freshSave(meta); };

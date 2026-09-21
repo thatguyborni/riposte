@@ -113,7 +113,7 @@ const GJ_CFG = {
   }
 };
 "use strict";
-const VERSION = "4.6.0";
+const VERSION = "4.7.0";
 /* ================================================================
    RIPOSTE v3 — core: screen, font, sprites, audio, save
    ================================================================ */
@@ -732,21 +732,25 @@ function musicTick() {
 
 /* ---------------- save / meta ---------------- */
 const SAVE_KEY = "riposte.v3.meta", RUN_KEY = "riposte.v3.run";
+// mods that joined the free pool in 4.7
+const FREE_47 = ["anchor", "bulwark", "shockwave", "slipstream", "scatter", "cold"];
 function freshMeta() {
   return {
     v: 3, tokens: 0, earned: 0,
-    unlocked: ["wide","quick","ricochet","plating","magnet","capacitor","salvage","split","seeker"],
+    unlocked: ["wide","quick","ricochet","plating","magnet","capacitor","salvage","split","seeker"].concat(FREE_47),
     shields: {standard:true, buckler:false, tower:false, glass:false, mirror:false, signal:false},
     shield: "standard",
     upg: {plate:0, change:0, coolant:0, lucky:0, carto:0},
     fragments: [false, false, false, false, false],
     secrets: {vault1:false, vault2:false, vault3:false, untouched:false, static:false, mirror:false, signal:false, echo:false},
     stats: {runs:0, wins:0, bestDepth:0, kills:0, perfects:0, trueEnd:0, mines:0, bestWave:0,
-      arcadeGames:0, dailies:0, bestScore:0, bestScoreWave:0, activeTime:0, bestRun:null},
+      arcadeGames:0, dailies:0, bestScore:0, bestScoreWave:0, activeTime:0, bestRun:null,
+      catches:0, catchL:0, catchR:0, sessions:0, basements:0},
     arcade: [], initials: "AAA", name: "", pid: "", sent: {}, saveT: 0, cloud: {},
     seen: {}, ach: {}, history: [], npcs: {}, asc: 0, daily: null, dailyBest: 0, dailyFriends: [],
     synSeen: {}, modsSeen: {}, tutorialDone: false, hubSeen: false, gj: null, migr4: false,
     logs: {}, tapesDue: {}, flags: {}, playTime: 0, hauntSeen: false, milo: "",
+    lore: {}, loreDue: {}, hrs: new Array(24).fill(0), firstSeen: 0,
     settings: {sound: 2, crt: true, fullscreen: false, vol: 8, musVol: 8, sfxVol: 8, curve: 2, tint: 0,
       phosphor: true, shake: true, effects: 2, rumble: true, haunt: 2,
       taim: 0, tsize: 1, tfs: true, diff: 2}
@@ -777,6 +781,8 @@ function loadMeta() {
   if (!Array.isArray(m.arcade)) m.arcade = [];
   m.arcade = m.arcade.filter(e => e && typeof e.s === "number").slice(0, 10);
   migrate4(m);
+  if (!m.flags) m.flags = {};
+  if (!m.flags.pool47) { m.flags.pool47 = 1; for (const k of FREE_47) if (!m.unlocked.includes(k)) m.unlocked.push(k); }
   return m;
 }
 // saves from before 4.0: credit what the player had clearly already done
@@ -893,7 +899,11 @@ const FOE = {
 function baseStats() {
   return {arc:0.80, bandIn:8, bandOut:19, perfectD:12, pMul:1.55, ppMul:2.4, bounce:1, pBounce:2,
     seek:0.55, seekTurn:2.7, split:0, pierce:0, moveMul:1, pulseCd:5, coinMul:1, twin:false, zap:0,
-    reflex:0, glassHeal:false, perfectAll:false, mirror:false, phase:false};
+    reflex:0, glassHeal:false, perfectAll:false, mirror:false, phase:false,
+    // 4.7 mods
+    anchor:0, pulseR:1, dashCd:1, pSplit:0, cold:0, interest:0, bounty:0, spotter:false, mender:false, dmg:0, outMul:1,
+    longshot:0, stun:0, discharge:0, ram:0, whirl:false, gravity:0, laststand:false, leech:0, momentum:0,
+    nova:0, sat:0, failsafe:0, stopwatch:0, cont:false, afterimage:false};
 }
 
 let G = null;
@@ -903,7 +913,7 @@ function newCombat(o) {
     p: {x:ACX, y:ACY + 20, vx:0, vy:0, r:3.5, aim:-Math.PI / 2, inv:0, pulseCd:0, flash:0, dashT:0, dashCd:0},
     ghosts: [],
     lives: o.lives || 3, maxLives: o.maxLives || o.lives || 3,
-    bullets:[], foes:[], parts:[], floats:[], coins:[], drops:[], zaps:[],
+    bullets:[], foes:[], parts:[], floats:[], coins:[], drops:[], zaps:[], decoys:[], sats:null, anch:0, slowT:0,
     waves: o.waves || null, waveIdx: -1, spawnQ: [], waveT: 0.9, wave: 0,
     score:0, combo:1, comboT:0, bestChain:1, perfects:0, kills:0, hits:0, coinsGot:0,
     shake:0, hitstop:0, ts:1, flash:0, acc:0, t:0,
@@ -1001,7 +1011,14 @@ function dropCoins(x, y, n) {
 }
 
 /* ---------------- core helpers ---------------- */
-function curArc() { return G.S.arc * (G.buff === "wide" ? 1.5 : 1) * DLV().arc; }
+function curArc() {
+  const S = G.S;
+  let a = S.arc * (G.buff === "wide" ? 1.5 : 1) * DLV().arc;
+  if (S.anchor && G.anch) a *= 1 + 0.35 * S.anchor * G.anch;          // ANCHOR: wider while you stand still
+  if (lastStand()) a *= 1.4;
+  return Math.min(a, 2.9);
+}
+const lastStand = () => G.S.laststand && G.mode === "run" && G.lives === 1 && !G.over;
 function plateBlocks(f, hitAng) {
   if (G.S.phase) return false;
   let n = 0, arc = 0;
@@ -1018,25 +1035,26 @@ function fire(f, ang, speed, r, fast) {
     vx: Math.cos(ang) * speed * (G.bulletMul || 1), vy: Math.sin(ang) * speed * (G.bulletMul || 1), r: r || 1.5, friend:false, life:7,
     seek:0, bounce:0, chain:0, fast:!!fast, perfect:false, pierce:0, rally:0});
 }
-function setFriendly(b, ang, out, perfect) {
-  const S = G.S, p = G.p;
+function setFriendly(b, ang, out, perfect, o) {
+  const S = G.S, p = o || G.p;
   b.vx = Math.cos(ang) * out; b.vy = Math.sin(ang) * out;
   b.friend = true; b.seek = S.seek + (perfect ? 0.2 : 0); b.bounce = perfect ? S.pBounce : S.bounce;
   b.life = 4.5; b.r = perfect ? 2.5 : 2; b.chain = 0; b.perfect = !!perfect;
   b.pierce = S.pierce + (G.buff === "pierce" ? 1 : 0);
   b.x = p.x + Math.cos(ang) * 16; b.y = p.y + Math.sin(ang) * 16;
+  b.dist = S.nest && G.anch > 0.8 ? 999 : 0; b.nova = false;
 }
-function parry(b, ang, perfect) {
+function parry(b, ang, perfect, o) {
   const S = G.S, p = G.p;
   const spd = Math.hypot(b.vx, b.vy);
   G.parries = (G.parries || 0) + 1;
-  const out = Math.max(spd * (perfect ? S.ppMul : S.pMul), perfect ? 248 : 188);
-  setFriendly(b, ang, out, perfect);
-  const extra = S.split + (perfect && S.mirror ? 2 : 0);
+  const out = Math.max(spd * (perfect ? S.ppMul : S.pMul), perfect ? 248 : 188) * S.outMul;
+  setFriendly(b, ang, out, perfect, o);
+  const extra = S.split + (perfect ? S.pSplit : 0) + (perfect && S.mirror ? 2 : 0);
   for (let k = 1; k <= extra; k++) {
     const off = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.24;
     const nb = Object.assign({}, b);
-    setFriendly(nb, ang + off, out * 0.92, perfect);
+    setFriendly(nb, ang + off, out * 0.92, perfect, o);
     G.bullets.push(nb);
   }
   burst(b.x, b.y, perfect ? 12 : 7, perfect ? C.wh : C.bl, perfect ? 144 : 104, 0.32);
@@ -1044,6 +1062,7 @@ function parry(b, ang, perfect) {
   G.hitstop = Math.max(G.hitstop, perfect ? 0.07 : 0.03);
   p.flash = perfect ? 0.22 : 0.14;
   if (G.mode !== "attract") {
+    loreCatch(ang);
     if (perfect) {
       G.perfects++; G.runPerf++;
       addScore(30 * G.combo, b.x, b.y, C.wh);
@@ -1051,6 +1070,7 @@ function parry(b, ang, perfect) {
       G.combo++; if (G.combo > G.bestChain) G.bestChain = G.combo;
       ring(p.x, p.y, 28, C.wh, 0.26); fxGlitch(0.07);
       if (S.glassHeal && G.runPerf % 5 === 0 && G.lives < G.maxLives) { G.lives++; floatTxt(p.x, p.y - 24, "+1 SHIELD", C.li); }
+      if (S.stopwatch) { G.slowT = Math.max(G.slowT || 0, 0.45 * S.stopwatch * (S.timelord ? 2 : 1)); }
     } else addScore(10 * G.combo, b.x, b.y, C.bl);
     G.comboT = Math.max(G.comboT, perfect ? 3.2 : 1.6);
   }
@@ -1059,19 +1079,23 @@ function parry(b, ang, perfect) {
 }
 function doPulse() {
   if (!G || G.mode === "attract" || G.over || G.paused || G.p.pulseCd > 0) return;
-  const p = G.p, R = 47;
-  p.pulseCd = G.S.pulseCd;
+  const p = G.p, S = G.S, R = 47 * S.pulseR;
+  p.pulseCd = S.pulseCd;
   G.pulses = (G.pulses || 0) + 1;
   for (const b of G.bullets) {
     if (b.friend) continue;
     const dx = b.x - p.x, dy = b.y - p.y;
     if (Math.hypot(dx, dy) < R) parry(b, Math.atan2(dy, dx), G.S.perfectAll || G.S.overload);
   }
-  for (const f of G.foes) {
-    if (FOE[f.type].boss) continue;
+  for (const f of G.foes.slice()) {
+    if (!G.foes.includes(f)) continue;
+    const boss = FOE[f.type].boss;
     const dx = f.x - p.x, dy = f.y - p.y, d = Math.hypot(dx, dy) || 1;
-    if (d < R * 1.5) { f.vx += dx / d * 104; f.vy += dy / d * 104; }
+    if (!boss && d < R * 1.5) { f.vx += dx / d * 104; f.vy += dy / d * 104; }
+    if (S.stun && d < R * 1.5 && f.type !== "mine") f.stun = Math.max(f.stun || 0, boss ? S.stun * 0.3 : S.stun);
+    if (S.discharge && d < R * 1.3 && !f.dormant) { G.zaps.push({x1: p.x, y1: p.y, x2: f.x, y2: f.y, t: 0.16}); damageFoe(f, S.discharge + (S.thunder ? 1 : 0), 1, true); }
   }
+  if (S.stun) ring(p.x, p.y, R * 1.5, C.ye, 0.3);
   ring(p.x, p.y, R, C.bl, 0.42);
   burst(p.x, p.y, 14, C.bl, 130, 0.4);
   G.shake = Math.min(5, G.shake + 3);
@@ -1090,13 +1114,23 @@ function doDash() {
   if (!dx && !dy) { const sp = Math.hypot(p.vx, p.vy); if (sp > 5) { dx = p.vx / sp; dy = p.vy / sp; } else { dx = Math.cos(p.aim); dy = Math.sin(p.aim); } }
   const m = Math.hypot(dx, dy) || 1;
   p.vx = dx / m * 340 * G.S.moveMul; p.vy = dy / m * 340 * G.S.moveMul;
-  p.dashT = 0.13; p.dashCd = 1.1; p.inv = Math.max(p.inv, 0.22);
+  const S = G.S;
+  p.dashT = 0.13; p.dashCd = 1.1 * S.dashCd; p.inv = Math.max(p.inv, S.juggernaut ? 0.4 : 0.22);
   G.dashes = (G.dashes || 0) + 1;
+  if (S.whirl) p.whirlT = 0.3;
+  if (S.afterimage) G.decoys.push({x: p.x, y: p.y, t: S.deadringer ? 2.4 : 1.2, max: S.deadringer ? 2.4 : 1.2});
   noise(0.16, 0.12, 900, 3200); tone(420, 0.08, "square", 0.06, 900);
 }
 function hurt() {
-  const p = G.p;
+  const p = G.p, S = G.S;
   if (p.inv > 0 || G.mode === "attract" || G.over) return;
+  // FAILSAFE: the first hit (or hits) of a fight turns into a free pulse
+  if (S.failsafe && (G.fsUsed || 0) < S.failsafe) {
+    G.fsUsed = (G.fsUsed || 0) + 1;
+    const cd = p.pulseCd; p.pulseCd = 0; doPulse(); p.pulseCd = cd;
+    p.inv = 1; floatTxt(p.x, p.y - 16, "FAILSAFE", C.li); fxGlitch(0.3); padRumble(0.4, 0.3, 120);
+    return;
+  }
   G.lives--; G.hits++;
   p.inv = 1.4; G.combo = 1; G.comboT = 0;
   fxGlitch(0.75); fxWobble(0.9); sfxGlitch(true); padRumble(0.9, 0.6, 220);
@@ -1106,6 +1140,13 @@ function hurt() {
   for (let i = G.bullets.length - 1; i >= 0; i--) {
     const b = G.bullets[i];
     if (!b.friend && Math.hypot(b.x - p.x, b.y - p.y) < 60) G.bullets.splice(i, 1);
+  }
+  if (G.lives <= 0 && S.cont && !G.contUsed && G.mode === "run") {
+    // CONTINUE?: one more go, then the mod is spent
+    G.contUsed = true; G.lives = 1; p.inv = 2.6;
+    for (let i = G.bullets.length - 1; i >= 0; i--) if (!G.bullets[i].friend) G.bullets.splice(i, 1);
+    banner("CONTINUE?", C.ye, 2.2); seq([392, 330, 262], 180, "square", 0.12);
+    if (G.dark && haunted(1)) setTimeout(() => whisper("HE LETS YOU. THIS ONCE."), 700);
   }
   if (G.lives <= 0) {
     G.lives = 0; G.over = true; G.won = false; G.endT = 1.5;
@@ -1145,7 +1186,16 @@ function killFoe(f, idx, chain, noZap) {
     chain > 1 ? sfx.chain(chain) : sfx.kill();
     maybeDrop(f.x, f.y, f.type === "armor" ? 0.34 : 0.085);
   }
-  if (G.mode === "run") dropCoins(f.x, f.y, base.coins + (f.elite ? 3 : 0));
+  if (G.mode === "run") {
+    dropCoins(f.x, f.y, base.coins + (f.elite ? 3 : 0) + (f.type === "mine" || f.type === "shard" ? 0 : G.S.bounty));
+    if (G.S.leech && !G.over) {
+      G.leechK = (G.leechK || 0) + 1;
+      if (G.leechK >= [0, 20, 15, 10][Math.min(3, G.S.leech)]) {
+        G.leechK = 0;
+        if (G.lives < G.maxLives) { G.lives++; floatTxt(G.p.x, G.p.y - 18, "+1 SHIELD", C.li); ring(G.p.x, G.p.y, 20, C.li, 0.3); }
+      }
+    }
+  }
   G.foes.splice(idx, 1);
   if (f.type === "splitter") for (const k of [-1, 1]) spawnFoe("shard", {x: f.x + k * 8, y: f.y});
   if (!noZap && G.S.zap > 0 && G.mode !== "attract") {
@@ -1232,7 +1282,8 @@ function combatStep(dt) {
   G.t += dt;
   if (G.buff) { G.buffT -= dt; if (G.buffT <= 0) G.buff = null; }
   if (G.lightsOut > 0) G.lightsOut -= dt;
-  const slowed = G.buff === "slow";
+  if (G.slowT > 0) G.slowT -= dt;                    // STOPWATCH
+  const slowed = G.buff === "slow" || G.slowT > 0;
 
   /* ---- player ---- */
   let ax = 0, ay = 0;
@@ -1263,9 +1314,11 @@ function combatStep(dt) {
       if (Math.hypot(PAD.rx, PAD.ry) > 0.35) p.aim = Math.atan2(PAD.ry, PAD.rx);   // otherwise hold the last aim
     } else p.aim = Math.atan2(mouse.y - p.y, mouse.x - p.x);
   }
-  const boost = (slowed ? 1.6 : 1) * S.moveMul;
+  const boost = (slowed ? 1.6 : 1) * S.moveMul * (S.redmist && G.lives === 1 ? 1.3 : 1);
   if (p.dashT > 0) { p.dashT -= dt; if ((G.t * 60 | 0) % 2 === 0) G.ghosts.push({x: p.x, y: p.y, t: 0.22}); }
   if (p.dashCd > 0) p.dashCd -= dt;
+  if (p.whirlT > 0) p.whirlT -= dt;
+  modTick(dt);
   for (let i = G.ghosts.length - 1; i >= 0; i--) { G.ghosts[i].t -= dt; if (G.ghosts[i].t <= 0) G.ghosts.splice(i, 1); }
   const ACC = 700 * boost, MAXV = 122 * boost;
   p.vx += ax * ACC * dt; p.vy += ay * ACC * dt;
@@ -1273,6 +1326,7 @@ function combatStep(dt) {
   const sp = Math.hypot(p.vx, p.vy);
   if (sp > MAXV && p.dashT <= 0) { p.vx = p.vx / sp * MAXV; p.vy = p.vy / sp * MAXV; }
   p.x += p.vx * dt; p.y += p.vy * dt;
+  if (G.mode !== "attract") G.moved = (G.moved || 0) + Math.hypot(p.vx, p.vy) * dt;
   const pad = 8;
   if (p.x < AX0 + pad) { p.x = AX0 + pad; p.vx *= -0.35; }
   if (p.x > AX1 - pad) { p.x = AX1 - pad; p.vx *= -0.35; }
@@ -1294,6 +1348,9 @@ function combatStep(dt) {
     const base = FOE[f.type];
     f.born += dt;
     if (f.hit > 0) f.hit -= dt;
+    if (f.stun > 0) f.stun -= dt;
+    if (f.slowT > 0) f.slowT -= dt;
+    const stunned = f.stun > 0, fsl = fslow * (f.slowT > 0 ? (base.boss ? 0.75 : 0.5) : 1);
     if (f.flashT > 0) f.flashT -= dt;
     const dx = p.x - f.x, dy = p.y - f.y, dist = Math.hypot(dx, dy) || 1;
     f.ang = Math.atan2(dy, dx);
@@ -1325,7 +1382,8 @@ function combatStep(dt) {
       continue;
     }
 
-    if (f.type === "hollow") hollowStep(f, p, dt, dx, dy, dist);
+    if (stunned) { f.vx *= Math.pow(0.03, dt); f.vy *= Math.pow(0.03, dt); }
+    else if (f.type === "hollow") hollowStep(f, p, dt, dx, dy, dist);
     else if (f.type === "mimic" && f.dormant) mimicStep(f, p, dt, dist);
     else if (f.type === "rusher") {
       const acc = base.spd * 2.4;
@@ -1353,12 +1411,17 @@ function combatStep(dt) {
         if (f.dash <= 0) { f.dash = f.p2 ? 1.1 + rand() * 0.8 : 2 + rand() * 1.5; const a = rand() * TAU; f.vx += Math.cos(a) * 150; f.vy += Math.sin(a) * 150; f.orbit *= -1; }
       }
     }
-    f.x += f.vx * dt * fslow; f.y += f.vy * dt * fslow;
+    f.x += f.vx * dt * fsl; f.y += f.vy * dt * fsl;
     if (f.born > 1.5) { f.x = clamp(f.x, AX0 + 6, AX1 - 6); f.y = clamp(f.y, AY0 + 6, AY1 - 6); }
-    foeDefense(f, base, p, dist, dt * fslow);
+    if (!stunned) foeDefense(f, base, p, dist, dt * fsl);
     if (!G.foes.includes(f)) continue;
 
-    if (f.type !== "rusher" && f.born > (base.boss ? 1.4 : 0.6) && !G.over) foeFire(f, dt * fslow, diff);
+    if (!stunned && f.type !== "rusher" && f.born > (base.boss ? 1.4 : 0.6) && !G.over) foeFire(f, dt * fsl, diff);
+    // BATTERING RAM: dashing through something hurts it
+    if (S.ram && p.dashT > 0 && G.mode !== "attract" && f.ramId !== G.dashes && Math.hypot(p.x - f.x, p.y - f.y) < f.r + 9 && !f.dormant) {
+      f.ramId = G.dashes; burst(f.x, f.y, 10, C.li, 90, 0.3); G.shake = Math.min(5, G.shake + 2); sfx.clank();
+      if (damageFoe(f, S.ram + (S.juggernaut ? 1 : 0), 1)) continue;
+    }
 
     if (G.mode !== "attract" && p.inv <= 0 && !G.over && dist < f.r + p.r) {
       hurt();
@@ -1412,8 +1475,10 @@ function combatStep(dt) {
         b.vx = Math.cos(ba) * bs; b.vy = Math.sin(ba) * bs;
       }
     }
+    if (!b.friend && S.gravity && !G.over) gravityBend(b, dt);
     const bs = (!b.friend && slowed) ? 0.45 : 1;
     b.x += b.vx * dt * bs; b.y += b.vy * dt * bs;
+    if (b.friend) b.dist = (b.dist || 0) + Math.hypot(b.vx, b.vy) * dt;
 
     if (b.x < AX0 + 2 || b.x > AX1 - 2 || b.y < AY0 + 2 || b.y > AY1 - 2) {
       if (b.friend && b.bounce > 0) {
@@ -1427,10 +1492,12 @@ function combatStep(dt) {
 
     if (!b.friend) {
       if (G.over) continue;
+      if (S.sat && satBlock(b)) { G.bullets.splice(i, 1); continue; }
+      if (G.decoys.length && decoyCatch(b)) continue;
       const pdx = b.x - p.x, pdy = b.y - p.y, pd = Math.hypot(pdx, pdy);
       if (pd > S.bandIn && pd < S.bandOut && (pdx * b.vx + pdy * b.vy) < 0) {
         const ang = Math.atan2(pdy, pdx);
-        if (angDiff(ang, p.aim) < arc || (S.twin && angDiff(ang, p.aim + Math.PI) < arc * 0.8)) {
+        if (angDiff(ang, p.aim) < arc || (S.twin && angDiff(ang, p.aim + Math.PI) < arc * 0.8) || p.whirlT > 0) {
           parry(b, ang, S.perfectAll || pd <= S.perfectD); continue;
         }
       }
@@ -1472,11 +1539,13 @@ function combatStep(dt) {
           break;
         }
         burst(b.x, b.y, 5, C.bl, 64, 0.3);
-        const dmg = 1 + (b.rally >= 2 ? 1 : 0) + (b.perfect && S.glassCannon ? 1 : 0);
+        const dmg = 1 + (b.rally >= 2 ? 1 : 0) + (b.perfect && S.glassCannon ? 1 : 0) + (b.nova ? 0 : modDamage(b, f));
         f.hp -= dmg; f.hit = 0.12;
+        if (S.cold && f.hp > 0) f.slowT = Math.max(f.slowT || 0, S.cold);
         if (f.hp <= 0) {
           b.chain++;
           killFoe(f, j, b.chain);
+          if (S.nova && !b.nova) novaBurst(f.x, f.y);
           b.vx *= 0.82; b.vy *= 0.82; b.seek = 0.25;
         } else {
           if (b.pierce > 0) { b.pierce--; b.vx *= 0.7; b.vy *= 0.7; b.seek = 0.3; }
@@ -1489,7 +1558,7 @@ function combatStep(dt) {
   }
 
   for (let i = G.zaps.length - 1; i >= 0; i--) { G.zaps[i].t -= dt; if (G.zaps[i].t <= 0) G.zaps.splice(i, 1); }
-  if (G.comboT > 0) { G.comboT -= dt; if (G.comboT <= 0) G.combo = 1; }
+  if (G.comboT > 0) { G.comboT -= dt / (1 + 0.5 * S.momentum); if (G.comboT <= 0) G.combo = 1; }
   for (let i = G.parts.length - 1; i >= 0; i--) {
     const q = G.parts[i];
     q.life -= dt;
@@ -1707,7 +1776,7 @@ function drawPlayer() {
   L.globalAlpha = 1;
   if (!blink) drawSpr(SPR.player, p.x, p.y, p.flash > 0);
   const arc = curArc();
-  const col = p.flash > 0 ? C.wh : (G.buff === "wide" ? C.bl : C.ye);
+  const col = p.flash > 0 ? C.wh : (G.buff === "wide" ? C.bl : lastStand() ? C.or : C.ye);
   if (!blink) {
     arcPx(p.x, p.y, 13, p.aim - arc, p.aim + arc, col, 2);
     for (const s of [-1, 1]) {
@@ -1756,6 +1825,7 @@ function drawCombat(opts) {
     }
   }
   for (const b of G.bullets) drawBullet(b);
+  drawModFx();
   drawPlayer();
   L.restore();
   if (G.dark) drawDarkness();
@@ -1794,7 +1864,7 @@ function drawHud() {
     txt("COINS", x, 2, C.gy); txt("$" + (run.coins + Math.round(G.coinsGot * G.S.coinMul)), x, 8, C.ye); x += 30;
     txt("DEPTH", x, 2, C.gy); txt(run.depth + "~" + (G.pal.name.replace("THE ", "")), x, 8, C.wh); x += 64;
   }
-  txt("CHAIN", x, 2, C.gy);
+  txt(G.mode !== "attract" && haunted(4) && scaresOn() && G.t % 83 > 82.7 ? "AGAIN" : "CHAIN", x, 2, C.gy);
   const pulseC = G.combo > 1 && G.comboT > 2.9;
   txt("X" + G.combo, x, 8, G.combo >= 10 ? (Math.floor(T * 8) % 2 ? C.ye : C.or) : G.combo > 1 ? (pulseC ? C.wh : C.bl) : C.wh);
   if (G.combo > 1) { R(x + 12, 10, 12, 2, C.nv); R(x + 12, 10, Math.round(12 * clamp(G.comboT / 3.2, 0, 1)), 2, C.bl); }
@@ -1803,7 +1873,7 @@ function drawHud() {
   // right side
   heartRow(W - 12, 5, G.lives, G.maxLives, "r");
   const px0 = W - 12 - Math.min(8, Math.max(G.lives, G.maxLives)) * 6 - 36;
-  const dr = G.p.dashCd <= 0 ? 1 : 1 - G.p.dashCd / 1.1;
+  const dr = G.p.dashCd <= 0 ? 1 : 1 - G.p.dashCd / (1.1 * G.S.dashCd);
   txt("DASH", px0 - 26, 2, C.gy);
   R(px0 - 26, 9, 18, 3, C.nv); R(px0 - 26, 9, Math.round(18 * clamp(dr, 0, 1)), 3, dr >= 1 ? C.wh : C.la);
   txt("PULSE", px0, 2, C.gy);
@@ -1819,26 +1889,65 @@ function drawHud() {
 /* ================================================================
    Descent — content, run state, map generation
    ================================================================ */
+const MOD_SLOTS = 3;                 // you carry three mods at most
+const ROMAN = ["", "I", "II", "III"];
+// every mod has a kind, so a card says at a glance what it touches
+const MOD_KIND = {shield: ["SHIELD", C.ye], shots: ["SHOTS", C.bl], pulse: ["PULSE", C.la], move: ["MOVE", C.li],
+  armour: ["ARMOUR", C.lg], coins: ["COINS", C.or], risk: ["RISK", C.rd], odd: ["STRANGE", C.pk]};
 const MODS = {
-  wide:     {n:"WIDE GUARD",   r:"c", d:"SHIELD ARC +30%.", a:S => S.arc *= 1.3},
-  quick:    {n:"QUICK RETURN", r:"c", d:"RETURNED SHOTS FLY 25% FASTER.", a:S => { S.pMul *= 1.25; S.ppMul *= 1.25; }},
-  ricochet: {n:"RICOCHET",     r:"c", d:"RETURNED SHOTS BOUNCE OFF ONE MORE WALL.", a:S => { S.bounce++; S.pBounce++; }},
-  plating:  {n:"PLATING",      r:"c", d:"+1 MAX SHIELD, AND REPAIR 1.", g:r => { r.maxLives++; r.lives++; }},
-  magnet:   {n:"MAGNET",       r:"c", d:"THE CATCH ZONE IS 40% DEEPER.", a:S => { S.bandOut += 4; S.bandIn = Math.max(5, S.bandIn - 2); }},
-  capacitor:{n:"CAPACITOR",    r:"c", d:"PULSE RECHARGES 30% FASTER.", a:S => S.pulseCd *= 0.7},
-  salvage:  {n:"SALVAGE",      r:"c", d:"+40% COINS FROM EVERY FIGHT.", a:S => S.coinMul *= 1.4},
-  split:    {n:"SPLIT",        r:"u", d:"EVERY RETURNED SHOT SPLITS INTO ONE MORE.", a:S => S.split++},
-  seeker:   {n:"SEEKER",       r:"u", d:"RETURNED SHOTS HUNT MUCH HARDER.", a:S => { S.seekTurn *= 1.8; S.seek += 0.4; }},
-  pierce:   {n:"PIERCE",       r:"u", d:"SHOTS SURVIVE ONE HIT THAT DOESN'T KILL.", a:S => S.pierce++},
-  overclock:{n:"OVERCLOCK",    r:"u", d:"YOU MOVE 20% FASTER.", a:S => S.moveMul *= 1.2},
-  perfect:  {n:"PERFECTIONIST",r:"u", d:"THE PERFECT WINDOW IS WIDER.", a:S => S.perfectD += 2.5},
-  twin:     {n:"TWIN GUARD",   r:"r", d:"A SECOND, SMALLER SHIELD GUARDS YOUR BACK.", a:S => S.twin = true},
-  zap:      {n:"ARC LIGHTNING",r:"r", d:"EVERY KILL ZAPS THE NEAREST FOE.", a:S => S.zap++},
-  reflex:   {n:"REFLEX",       r:"r", d:"BULLET-TIME KICKS IN SOONER AND SLOWER.", a:S => S.reflex++},
-  glass:    {n:"GLASS HEART",  r:"r", d:"EVERY 5 PERFECTS REPAIRS A SHIELD. -1 MAX SHIELD.", a:S => S.glassHeal = true,
-             g:r => { r.maxLives = Math.max(1, r.maxLives - 1); r.lives = Math.min(r.lives, r.maxLives); }}
+  wide:     {n:"WIDE GUARD",   r:"c", k:"shield", d:"SHIELD ARC +30%.", a:S => S.arc *= 1.3},
+  quick:    {n:"QUICK RETURN", r:"c", k:"shots",  d:"RETURNED SHOTS FLY 25% FASTER.", a:S => { S.pMul *= 1.25; S.ppMul *= 1.25; }},
+  ricochet: {n:"RICOCHET",     r:"c", k:"shots",  d:"RETURNED SHOTS BOUNCE OFF ONE MORE WALL.", a:S => { S.bounce++; S.pBounce++; }},
+  plating:  {n:"PLATING",      r:"c", k:"armour", d:"+1 MAX SHIELD, AND REPAIR 1.", g:r => { r.maxLives++; r.lives++; }, u:r => { r.maxLives = Math.max(1, r.maxLives - 1); r.lives = Math.min(r.lives, r.maxLives); }},
+  magnet:   {n:"MAGNET",       r:"c", k:"shield", d:"THE CATCH ZONE IS 40% DEEPER.", a:S => { S.bandOut += 4; S.bandIn = Math.max(5, S.bandIn - 2); }},
+  capacitor:{n:"CAPACITOR",    r:"c", k:"pulse",  d:"PULSE RECHARGES 30% FASTER.", a:S => S.pulseCd *= 0.7},
+  salvage:  {n:"SALVAGE",      r:"c", k:"coins",  d:"+40% COINS FROM EVERY FIGHT.", a:S => S.coinMul *= 1.4},
+  anchor:   {n:"ANCHOR",       r:"c", k:"shield", d:"STAND STILL AND YOUR SHIELD GROWS 35% WIDER.", a:S => S.anchor++},
+  bulwark:  {n:"BULWARK",      r:"c", k:"armour", d:"+1 MAX SHIELD, BUT YOU MOVE 10% SLOWER.", a:S => S.moveMul *= 0.9,
+             g:r => { r.maxLives++; r.lives++; }, u:r => { r.maxLives = Math.max(1, r.maxLives - 1); r.lives = Math.min(r.lives, r.maxLives); }},
+  shockwave:{n:"SHOCKWAVE",    r:"c", k:"pulse",  d:"YOUR PULSE REACHES 30% FURTHER.", a:S => S.pulseR *= 1.3},
+  slipstream:{n:"SLIPSTREAM",  r:"c", k:"move",   d:"YOUR DASH RECHARGES 35% FASTER.", a:S => S.dashCd *= 0.65},
+  scatter:  {n:"SCATTERSHOT",  r:"c", k:"shots",  d:"PERFECT CATCHES THROW ONE EXTRA SHOT.", a:S => S.pSplit++},
+  cold:     {n:"COLD STEEL",   r:"c", k:"shots",  d:"ENEMIES YOUR SHOTS HIT ARE SLOWED FOR 2 SECONDS.", a:S => S.cold += 2},
+  interest: {n:"INTEREST",     r:"c", k:"coins",  d:"AFTER EACH FIGHT, EARN 10% OF YOUR COINS (UP TO 15).", a:S => S.interest++},
+  bounty:   {n:"BOUNTY",       r:"c", k:"coins",  d:"EVERY KILL DROPS ONE MORE COIN.", a:S => S.bounty++},
+  spotter:  {n:"SPOTTER",      r:"c", k:"odd",    max:1, d:"ENEMIES FLASH A WARNING RING JUST BEFORE THEY FIRE.", a:S => S.spotter = true},
+  mender:   {n:"SELF-REPAIR",  r:"c", k:"armour", max:1, d:"WIN A FIGHT WITHOUT A SCRATCH TO REPAIR 1 SHIELD.", a:S => S.mender = true},
+  split:    {n:"SPLIT",        r:"u", k:"shots",  d:"EVERY RETURNED SHOT SPLITS INTO ONE MORE.", a:S => S.split++},
+  seeker:   {n:"SEEKER",       r:"u", k:"shots",  d:"RETURNED SHOTS HUNT MUCH HARDER.", a:S => { S.seekTurn *= 1.8; S.seek += 0.4; }},
+  pierce:   {n:"PIERCE",       r:"u", k:"shots",  d:"SHOTS SURVIVE ONE HIT THAT DOESN'T KILL.", a:S => S.pierce++},
+  overclock:{n:"OVERCLOCK",    r:"u", k:"move",   d:"YOU MOVE 20% FASTER.", a:S => S.moveMul *= 1.2},
+  perfect:  {n:"PERFECTIONIST",r:"u", k:"shield", d:"THE PERFECT WINDOW IS WIDER.", a:S => S.perfectD += 2.5},
+  heavy:    {n:"HEAVY ROUNDS", r:"u", k:"shots",  d:"RETURNED SHOTS HIT 1 HARDER BUT FLY 20% SLOWER.", a:S => { S.dmg++; S.outMul *= 0.8; }},
+  longshot: {n:"LONGSHOT",     r:"u", k:"shots",  d:"SHOTS THAT TRAVEL FAR BEFORE THEY HIT DEAL +1.", a:S => S.longshot++},
+  stun:     {n:"STUN PULSE",   r:"u", k:"pulse",  d:"YOUR PULSE FREEZES NEARBY ENEMIES FOR 1.5 SECONDS.", a:S => S.stun += 1.5},
+  discharge:{n:"DISCHARGE",    r:"u", k:"pulse",  d:"YOUR PULSE HITS EVERY ENEMY IT REACHES FOR 1.", a:S => S.discharge++},
+  ram:      {n:"BATTERING RAM",r:"u", k:"move",   d:"DASHING THROUGH AN ENEMY HITS IT FOR 2.", a:S => S.ram += 2},
+  whirl:    {n:"WHIRLWIND",    r:"u", k:"move",   max:1, d:"WHILE YOU DASH, YOUR SHIELD COVERS EVERY SIDE.", a:S => S.whirl = true},
+  gravity:  {n:"GRAVITY WELL", r:"u", k:"shield", d:"ENEMY SHOTS NEAR YOU BEND TOWARD YOUR SHIELD.", a:S => S.gravity++},
+  laststand:{n:"LAST STAND",   r:"u", k:"risk",   max:1, d:"ON YOUR LAST SHIELD: A 40% WIDER ARC AND SHOTS HIT +1.", a:S => S.laststand = true},
+  leech:    {n:"LEECH",        r:"u", k:"armour", d:"EVERY 20 KILLS REPAIRS A SHIELD. LEVELS MAKE IT SOONER.", a:S => S.leech++},
+  momentum: {n:"MOMENTUM",     r:"u", k:"shots",  d:"YOUR COMBO LASTS LONGER. FROM 10 COMBO, SHOTS HIT +1.", a:S => S.momentum++},
+  berserk:  {n:"BERSERK",      r:"u", k:"risk",   d:"EVERY SHOT YOU RETURN HITS 1 HARDER. -1 MAX SHIELD.", a:S => S.dmg++,
+             g:r => { r.maxLives = Math.max(1, r.maxLives - 1); r.lives = Math.min(r.lives, r.maxLives); }, u:r => { r.maxLives++; }},
+  twin:     {n:"TWIN GUARD",   r:"r", k:"shield", max:1, d:"A SECOND, SMALLER SHIELD GUARDS YOUR BACK.", a:S => S.twin = true},
+  zap:      {n:"ARC LIGHTNING",r:"r", k:"shots",  d:"EVERY KILL ZAPS THE NEAREST FOE.", a:S => S.zap++},
+  reflex:   {n:"REFLEX",       r:"r", k:"odd",    d:"BULLET-TIME KICKS IN SOONER AND SLOWER.", a:S => S.reflex++},
+  glass:    {n:"GLASS HEART",  r:"r", k:"risk",   max:1, d:"EVERY 5 PERFECTS REPAIRS A SHIELD. -1 MAX SHIELD.", a:S => S.glassHeal = true,
+             g:r => { r.maxLives = Math.max(1, r.maxLives - 1); r.lives = Math.min(r.lives, r.maxLives); }, u:r => { r.maxLives++; }},
+  nova:     {n:"NOVA",         r:"r", k:"shots",  d:"A KILL WITH A RETURNED SHOT BURSTS INTO 4 MORE.", a:S => S.nova++},
+  satellite:{n:"SATELLITE",    r:"r", k:"shield", d:"A DRONE CIRCLES YOU AND EATS AN ENEMY SHOT EVERY FEW SECONDS.", a:S => S.sat++},
+  failsafe: {n:"FAILSAFE",     r:"r", k:"armour", d:"THE FIRST HIT OF EVERY FIGHT FIRES A FREE PULSE INSTEAD.", a:S => S.failsafe++},
+  stopwatch:{n:"STOPWATCH",    r:"r", k:"odd",    d:"PERFECT CATCHES SLOW THE WORLD FOR A MOMENT.", a:S => S.stopwatch++},
+  afterimage:{n:"AFTERIMAGE",  r:"r", k:"move",   max:1, d:"DASHING LEAVES A GHOST SHIELD BEHIND THAT CATCHES SHOTS.", a:S => S.afterimage = true},
+  cont:     {n:"CONTINUE?",    r:"r", k:"odd",    max:1, d:"IF YOUR LAST SHIELD BREAKS, PLAY ON WITH 1. THEN THIS MOD IS GONE.", a:S => S.cont = true}
 };
-const MOD_UNLOCK_COST = {pierce:60, overclock:60, perfect:80, reflex:100, glass:100, twin:120, zap:120};
+// mods you buy into the pool at the workbench (the rest are there from the start)
+const MOD_UNLOCK_COST = {spotter:40, interest:50, bounty:50, pierce:60, overclock:60, mender:70, heavy:70, berserk:70,
+  perfect:80, longshot:80, momentum:80, stun:80, ram:80, discharge:90, whirl:90, gravity:90, laststand:90, leech:90,
+  reflex:100, glass:100, twin:120, zap:120, stopwatch:130, nova:140, failsafe:140, satellite:150, afterimage:150};
+// mods that only turn up by finding something
+const MOD_SECRET = {cont: "SOMETHING IN THE BACK ROOM KNOWS WHERE IT IS."};
 const RAR_COL = {c:C.lg, u:C.bl, r:C.or};
 const RAR_NAME = {c:"COMMON", u:"UNCOMMON", r:"RARE"};
 const MOD_PRICE = {c:40, u:65, r:100};
@@ -1897,7 +2006,31 @@ function runStats() {
   return S;
 }
 function ownedMods() { return Object.keys(run.mods).filter(k => run.mods[k] > 0); }
+const modLv = id => (run && run.mods[id]) || 0;
+const modMax = id => (MODS[id] && MODS[id].max) || 3;
+const modName = id => MODS[id].n + (modLv(id) > 1 ? " " + ROMAN[modLv(id)] : "");
+const slotsFull = () => ownedMods().length >= MOD_SLOTS;
+const tuneable = () => ownedMods().filter(id => modLv(id) < modMax(id));
+// what taking this mod would do right now: a new slot, a level up, a swap, or nothing (already maxed)
+function modFate(id) {
+  const lv = modLv(id);
+  if (lv) return lv >= modMax(id) ? "max" : "up";
+  return slotsFull() ? "swap" : "new";
+}
 function gainMod(id) {
+  const fate = modFate(id);
+  if (fate === "max") { run.coins += 20; setTimeout(() => toast(MODS[id].n + " IS ALREADY MAXED. +20 COINS", C.ye), 200); return fate; }
+  if (fate === "swap") {
+    // slots are full: the player chooses what to drop next time the map comes up
+    if (!Array.isArray(run.pendingMods)) run.pendingMods = [];
+    run.pendingMods.push(id); saveRun();
+    return fate;
+  }
+  equipMod(id);
+  if (fate === "up") setTimeout(() => toast(MODS[id].n + " IS NOW LEVEL " + ROMAN[modLv(id)], RAR_COL[MODS[id].r]), 200);
+  return fate;
+}
+function equipMod(id) {
   const before = activeSynergies().map(s => s.id);
   run.mods[id] = (run.mods[id] || 0) + 1;
   if (MODS[id].g) MODS[id].g(run);
@@ -1911,13 +2044,43 @@ function gainMod(id) {
   }
   saveMeta();
 }
-function loseMod(id) { if (run.mods[id]) { run.mods[id]--; if (!run.mods[id]) delete run.mods[id]; } }
+// drop one level of a mod, or all of it
+function loseMod(id, all) {
+  let n = all ? (run.mods[id] || 0) : Math.min(1, run.mods[id] || 0);
+  while (n-- > 0) { run.mods[id]--; if (MODS[id] && MODS[id].u) MODS[id].u(run); }
+  if (!(run.mods[id] > 0)) delete run.mods[id];
+}
+function swapMod(out, inn) { loseMod(out, true); equipMod(inn); }
+// runs saved before slots existed: keep the best three, and ask about the rest
+function normalizeRunMods(r) {
+  if (!r.mods || typeof r.mods !== "object") r.mods = {};
+  if (!Array.isArray(r.pendingMods)) r.pendingMods = [];
+  r.pendingMods = r.pendingMods.filter(id => MODS[id]);
+  for (const id of Object.keys(r.mods)) {
+    if (!MODS[id] || !(r.mods[id] > 0)) { delete r.mods[id]; continue; }
+    const mx = MODS[id].max || 3;
+    while (r.mods[id] > mx) { r.mods[id]--; if (MODS[id].u) MODS[id].u(r); }
+  }
+  const ids = Object.keys(r.mods);
+  if (ids.length > MOD_SLOTS) {
+    const RW = {c: 0, u: 1, r: 2};
+    ids.sort((a, b) => (r.mods[b] - r.mods[a]) || (RW[MODS[b].r] - RW[MODS[a].r]));
+    for (const id of ids.slice(MOD_SLOTS)) {
+      for (let n = r.mods[id]; n > 0; n--) if (MODS[id].u) MODS[id].u(r);
+      delete r.mods[id];
+      if (!r.pendingMods.includes(id)) r.pendingMods.push(id);
+    }
+  }
+  return r;
+}
 function rollMod(minR, exclude) {
-  exclude = exclude || [];
+  exclude = (exclude || []).concat(run ? ownedMods().filter(id => modLv(id) >= modMax(id)) : []);
   let pool = (run && run.daily ? Object.keys(MODS) : meta.unlocked).filter(id => MODS[id] && !exclude.includes(id));
   if (minR === "u") pool = pool.filter(id => MODS[id].r !== "c");
-  if (minR === "r") pool = Object.keys(MODS).filter(id => MODS[id].r === "r" && !exclude.includes(id));
+  if (minR === "r") pool = Object.keys(MODS).filter(id => MODS[id].r === "r" && !exclude.includes(id) && (!MOD_SECRET[id] || meta.unlocked.includes(id) || (run && run.daily)));
+  if (minR === "c") pool = pool.filter(id => MODS[id].r === "c").concat([]);
   if (!pool.length) pool = meta.unlocked.filter(id => MODS[id] && !exclude.includes(id));
+  if (!pool.length) pool = Object.keys(MODS).filter(id => !exclude.includes(id));
   if (!pool.length) pool = Object.keys(MODS);
   const wt = {c:60, u:30, r:10};
   if (minR === "u") { wt.u = 75; wt.r = 25; }
@@ -2019,7 +2182,7 @@ function availNodes() {
 /* ---------------- run lifecycle ---------------- */
 function startRun(shield, opts) {
   opts = opts || {};
-  run = {depth: 1, shield, lives: 3, maxLives: 3, coins: 0, mods: {}, lens: false,
+  run = {depth: 1, shield, lives: 3, maxLives: 3, coins: 0, mods: {}, pendingMods: [], leechK: 0, lens: false,
     kills: 0, perfects: 0, bosses: 0, bank: 0, revealed: {}, usedEvents: [], map: null, curId: null,
     pendingId: null, runPerf: 0, fights: 0, curses: [], asc: opts.daily ? 0 : (opts.asc || 0),
     daily: opts.daily || null, seed: opts.daily ? "daily:" + opts.daily : null, rs: null, grades: {S: 0, A: 0, B: 0, C: 0}};
@@ -2053,6 +2216,7 @@ function loadRun() {
     if (r.asc == null) r.asc = 0;
     if (!r.grades) r.grades = {S: 0, A: 0, B: 0, C: 0};
     if (!r.usedEvents) r.usedEvents = [];
+    normalizeRunMods(r);
     return r;
   } catch (e) { return null; }
 }
@@ -2084,6 +2248,7 @@ const BOSS_FOR = [null, "warden", "furnace", "hydra", "echo"];
 function endRun(kind) {
   const glass = run.shield === "glass";
   const won = kind === "win" || kind === "true" || kind === "free" || kind === "stay";
+  if (kind === "dead" && (run.basement || run.depth === 5)) { if (!meta.flags) meta.flags = {}; meta.flags.miloLoss = 1; }
   let t = run.bank + Math.floor(run.kills * 0.5) + Math.floor(run.perfects * 0.3);
   if (kind === "win") t += 60;
   if (kind === "true") t += 150;
@@ -2129,7 +2294,7 @@ function endRun(kind) {
   saveMeta(); clearRun(); checkTapes();
   try { if (typeof onlineEvent === "function") onlineEvent(); } catch (e) {}
   const summary = {kind, tokens: t, depth: run.depth, kills: run.kills, perfects: run.perfects, bosses: run.bosses,
-    mods: ownedMods().map(id => MODS[id].n + (run.mods[id] > 1 ? " X" + run.mods[id] : "")), unlocks: unlocks.concat(extra), glass,
+    mods: ownedMods().map(modName), unlocks: unlocks.concat(extra), glass,
     asc: run.asc || 0, curses: nCurse, daily: run.daily, dailyScore, grades: run.grades};
   run = null;
   return summary;
@@ -2152,8 +2317,8 @@ const EVENTS = [
     {l:"SCAVENGE THE TOP", go:() => { run.coins += 25; return "+25 COINS."; }},
     {l:"DIG DEEPER (-1 SHIELD)", go:() => { hurtRun(1); const m = rollMod(); gainMod(m); return "SOMETHING BITES. YOU PULL OUT " + MODS[m].n + "."; }}]},
   {id:"tuner", t:"THE TUNER", b:"A FIGURE WITH A SOLDERING IRON OFFERS TO WORK ON YOUR GEAR. FOR FREE, APPARENTLY.", c:[
-    {l:"TUNE A MOD", req:() => ownedMods().length > 0, go:() => { const m = rpick(ownedMods()); gainMod(m); return MODS[m].n + " TUNED. IT STACKS AGAIN."; }},
-    {l:"SELL A MOD (+50 COINS)", req:() => ownedMods().length > 0, go:() => { const m = rpick(ownedMods()); loseMod(m); run.coins += 50; return "SOLD " + MODS[m].n + ". +50 COINS."; }},
+    {l:"TUNE A MOD", req:() => tuneable().length > 0, go:() => { const m = rpick(tuneable()); equipMod(m); return MODS[m].n + " TUNED. IT IS LEVEL " + ROMAN[modLv(m)] + " NOW."; }},
+    {l:"SELL A MOD (+40 A LEVEL)", req:() => ownedMods().length > 0, go:() => { const m = rpick(ownedMods()), c = 40 * modLv(m); loseMod(m, true); run.coins += c; return "SOLD " + MODS[m].n + ". +" + c + " COINS. THE SLOT IS EMPTY."; }},
     {l:"DECLINE", go:() => "THE IRON COOLS."}]},
   {id:"lens", t:"THE GLASS EYE", b:"A GLASS EYE RESTS ON A PEDESTAL. LOOKING THROUGH IT, THE MAP IS NOT QUITE THE SAME.", cond:() => !run.lens && meta.upg.carto === 0, c:[
     {l:"TAKE IT (-1 MAX SHIELD)", go:() => { run.lens = true; run.maxLives = Math.max(1, run.maxLives - 1); run.lives = Math.min(run.lives, run.maxLives); return "HIDDEN ROOMS WILL SHOW ON THE MAP FOR THE REST OF THIS RUN."; }},
@@ -2276,10 +2441,11 @@ const TitleScene = {
   update(dt) {
     combatTick(dt);
     const idle = T - lastInput > 25;
-    if (idle !== this.demo) { this.demo = idle; fxGlitch(0.5); fxRoll(); sfxGlitch(true); if (idle) this.demoT = 0; }
+    if (idle !== this.demo) { this.demo = idle; fxGlitch(0.5); fxRoll(); sfxGlitch(true); if (idle) { this.demoT = 0; this.demoCounted = false; } }
     if (this.demo) {
       this.demoT += dt;
       if (this.demoT > 8 && !(meta.flags && meta.flags.demoSeen)) { if (!meta.flags) meta.flags = {}; meta.flags.demoSeen = 1; saveMeta(); }
+      if (this.demoT > 30 && !this.demoCounted) { this.demoCounted = true; meta.flags.demoRuns = (meta.flags.demoRuns || 0) + 1; saveMeta(); checkLore(); }
       // the demo player stops playing and turns to face the glass
       const pos = haunted(3) && scaresOn() && this.demoT % 30 > 12 && this.demoT % 30 < 19;
       if (pos && !G.possess) { fxGlitch(0.3); tone(45, 1.5, "sine", 0.12); }
@@ -2385,9 +2551,9 @@ function drawPause(sc, quitLabel, quitAct, extra) {
   endItems(sc);
   if (G.mode === "run") {
     const ids = ownedMods();
-    txt("YOUR MODS", W / 2, 162, C.gy, 1, "c");
+    txt("YOUR MODS " + ids.length + "/" + MOD_SLOTS, W / 2, 162, C.gy, 1, "c");
     if (!ids.length) txt("NONE YET", W / 2, 170, C.gy, 1, "c");
-    ids.slice(0, 8).forEach((id, i) => txt(MODS[id].n + (run.mods[id] > 1 ? " X" + run.mods[id] : ""), W / 2, 170 + i * 7, RAR_COL[MODS[id].r], 1, "c"));
+    ids.slice(0, MOD_SLOTS).forEach((id, i) => txt(modName(id), W / 2, 170 + i * 7, RAR_COL[MODS[id].r], 1, "c"));
   }
 }
 function combatKey(sc, k, quitAct) {
@@ -2569,6 +2735,7 @@ function finishNode() {
   if (n) { n.visited = true; run.curId = n.id; }
   run.pendingId = null;
   if (run.lives <= 0) return go(RunOver, endRun("dead"));
+  if (run.pendingMods && run.pendingMods.length) return go(SwapScene);   // slots full: choose first
   go(RunMap);
 }
 
@@ -2624,6 +2791,7 @@ const RunMap = {
   enter() { music(run.depth === 5 ? "basement" : run.depth === 4 ? "signal" : "map"); this.showMods = false; saveRun(); this.hover = -1; },
   draw() {
     if (!run) return go(TitleScene);
+    if (run.pendingMods && run.pendingMods.length) return go(SwapScene);
     const pal = PALS[DEPTH_PAL[run.depth]];
     menuBg(pal);
     const nodes = run.map.nodes, avail = availNodes();
@@ -2672,8 +2840,9 @@ const RunMap = {
       txt(info[0], 4, 231, NODE_COL[selNode.type]);
       txt(info[1], 4 + tw(info[0]) + 8, 231, C.lg);
     } else txt(isTouch() ? "TAP A ROOM TO SEE IT, AGAIN TO GO" : "CHOOSE YOUR PATH", 4, 231, C.lg);
-    if (isTouch() || PAD.connected) btn(this, "MODS", W - 44, 227, 40, 11, () => { this.showMods = true; }, {col: C.la, oneTap: true});
-    else txt("TAB: MODS", W - 4, 231, C.gy, 1, "r");
+    const nm = ownedMods().length + "/" + MOD_SLOTS;
+    if (isTouch() || PAD.connected) btn(this, "MODS " + nm, W - 58, 227, 54, 11, () => { this.showMods = true; }, {col: C.la, oneTap: true});
+    else txt("TAB: MODS " + nm, W - 4, 231, C.gy, 1, "r");
     if (this.showMods) drawModsOverlay();
   },
   key(k) {
@@ -2699,12 +2868,17 @@ const RunMap = {
 };
 function drawModsOverlay() {
   panel(40, 30, 304, 180, C.la);
-  txt("YOUR MODS  ~  SHIELD: " + SHIELDS[run.shield].n, W / 2, 38, C.ye, 1, "c");
   const ids = ownedMods();
-  if (!ids.length) txt("NO MODS YET. WIN FIGHTS TO EARN THEM.", W / 2, 60, C.gy, 1, "c");
+  txt("YOUR MODS " + ids.length + "/" + MOD_SLOTS + "  ~  SHIELD: " + SHIELDS[run.shield].n, W / 2, 38, C.ye, 1, "c");
   const extra = activeSynergies().map(sy => ({n: "SYNERGY: " + sy.n, d: sy.d, c: C.pk}))
     .concat((run.curses || []).map(c => ({n: "CURSE: " + CURSES[c].n, d: CURSES[c].d, c: C.pl})));
-  const rows = ids.map(id => ({n: MODS[id].n + (run.mods[id] > 1 ? " X" + run.mods[id] : ""), d: MODS[id].d, c: RAR_COL[MODS[id].r]})).concat(extra);
+  const slots = [];
+  for (let i = 0; i < MOD_SLOTS; i++) {
+    const id = ids[i];
+    slots.push(id ? {n: modName(id) + (modLv(id) >= modMax(id) ? "  (MAX)" : ""), d: MODS[id].d, c: RAR_COL[MODS[id].r]}
+      : {n: "EMPTY SLOT", d: "WIN FIGHTS, OPEN CHESTS OR SHOP TO FILL IT.", c: C.gy});
+  }
+  const rows = slots.concat(extra);
   rows.slice(0, 12).forEach((r, i) => {
     const y = 52 + i * 12;
     txt(r.n, 50, y, r.c);
@@ -2723,6 +2897,7 @@ const RunFight = {
     newCombat({mode: "run", pal: DEPTH_PAL[run.depth], S: runStats(), lives: run.lives, maxLives: run.maxLives,
       waves, diff: depthDiff(run.depth, n.layer), elite: kind === "elite" || run.depth === 4, runPerf: run.runPerf,
       onEnd: res => fightEnd(res, n)});
+    G.leechK = run.leechK || 0;
     const cm = combatCurseMuls();
     G.bulletMul = cm.bullet; G.fireMul = cm.fire;
     G.touch = lastPointerTouch;
@@ -2744,11 +2919,13 @@ function fightEnd(res, n) {
   run.lives = G.lives; run.maxLives = G.maxLives;
   run.kills += G.kills; run.perfects += G.perfects; run.runPerf = G.runPerf;
   run.coins += Math.round(G.coinsGot * G.S.coinMul) + (res.win ? (G.gradeBonus || 0) : 0);
+  modsAfterFight(res.win);
   if (res.win && G.grade) { if (!run.grades) run.grades = {S: 0, A: 0, B: 0, C: 0}; run.grades[G.grade]++; }
   if (res.win && n.rescue) rescueNpc(n.rescue);
   meta.stats.kills += G.kills; meta.stats.perfects += G.perfects;
   if (!res.win) return go(RunOver, endRun("dead"));
   run.fights++;
+  if ((G.moved || 0) < 120 && G.kills >= 4 && !(meta.flags && meta.flags.still)) { if (!meta.flags) meta.flags = {}; meta.flags.still = 1; }
   if (G.perfects >= 10 && !meta.shields.mirror) {
     meta.shields.mirror = true; meta.secrets.mirror = true; sfx.secret();
     toast("SECRET SHIELD UNLOCKED: MIRROR", C.pk);
@@ -2774,18 +2951,30 @@ function fightEnd(res, n) {
 }
 
 /* ---------------- reward (pick a mod) ---------------- */
-function drawCard(sc, id, x, y, w, h, act, extra) {
-  const m = MODS[id], col = RAR_COL[m.r];
-  const sel = btn(sc, null, x, y, w, h, act, {col, dim: col});
-  R(x + 2, y + 2, w - 4, h - 4, sel ? "#16131F" : C.ink);
-  RO(x + 2, y + 2, w - 4, h - 4, sel ? col : C.nv);
+function drawCardFace(id, x, y, w, h, sel) {
+  const m = MODS[id], col = RAR_COL[m.r], kind = MOD_KIND[m.k] || MOD_KIND.odd;
   txt(RAR_NAME[m.r], x + w / 2, y + 7, col, 1, "c");
-  wrap(m.n, w - 10).forEach((l, i) => txt(l, x + w / 2, y + 18 + i * 7, C.wh, 1, "c"));
-  txt("@", x + w / 2 - 1, y + 36, col);
-  wrap(m.d, w - 12).forEach((l, i) => txt(l, x + w / 2, y + 48 + i * 7, C.lg, 1, "c"));
-  const own = run.mods[id] || 0;
-  if (own) txt("OWNED X" + own, x + w / 2, y + h - 12, C.gy, 1, "c");
-  if (extra) txt(extra, x + w / 2, y + h - (own ? 20 : 12), C.ye, 1, "c");
+  wrap(m.n, w - 10).slice(0, 2).forEach((l, i) => txt(l, x + w / 2, y + 18 + i * 7, C.wh, 1, "c"));
+  txt(kind[0], x + w / 2, y + 35, kind[1], 1, "c");
+  wrap(m.d, w - 12).forEach((l, i) => txt(l, x + w / 2, y + 46 + i * 7, C.lg, 1, "c"));
+}
+// o.slot: a mod you hold (shows its level); otherwise an offer (shows what taking it does)
+function drawCard(sc, id, x, y, w, h, act, extra, o) {
+  o = o || {};
+  const m = MODS[id], col = o.armed ? C.rd : RAR_COL[m.r];
+  const sel = btn(sc, null, x, y, w, h, act, {col, dim: col});
+  R(x + 2, y + 2, w - 4, h - 4, o.armed ? "#2A0A12" : sel ? "#16131F" : C.ink);
+  RO(x + 2, y + 2, w - 4, h - 4, o.armed ? C.rd : sel ? col : C.nv);
+  drawCardFace(id, x, y, w, h, sel);
+  let foot, fc = C.gy;
+  if (o.slot) { foot = o.armed ? "DROP IT?" : "LEVEL " + ROMAN[modLv(id)]; fc = o.armed ? C.rd : C.lg; }
+  else {
+    const f = modFate(id);
+    foot = f === "up" ? "LEVEL UP > " + ROMAN[modLv(id) + 1] : f === "max" ? "ALREADY MAXED" : f === "swap" ? "SLOTS FULL: SWAP" : "EMPTY SLOT";
+    fc = f === "up" ? C.li : f === "swap" ? C.or : C.gy;
+  }
+  txt(foot, x + w / 2, y + h - 12, fc, 1, "c");
+  if (extra) txt(extra, x + w / 2, y + h - 20, C.ye, 1, "c");
 }
 const RewardScene = {
   enter(o) {
@@ -2797,19 +2986,20 @@ const RewardScene = {
   draw() {
     menuBg(PALS[DEPTH_PAL[run.depth]]);
     runHeader();
-    title(this.kind === "vault" ? "THE VAULT OPENS" : this.kind === "altar" ? "THE ALTAR PAYS" : this.kind === "treasure" ? "TREASURE" : "CHOOSE A MOD", 24);
+    title(this.kind === "vault" ? "THE VAULT OPENS" : this.kind === "altar" ? "THE ALTAR PAYS" : this.kind === "treasure" ? "TREASURE" : "CHOOSE A MOD", 20);
     beginItems(this);
     const n = this.cards.length, cw = n > 3 ? 84 : 100, gap = 8;
     const x0 = W / 2 - (n * cw + (n - 1) * gap) / 2;
     this.cards.forEach((id, i) => drawCard(this, id, x0 + i * (cw + gap), 52, cw, 100, () => { gainMod(id); finishNode(); }));
     btn(this, "SKIP (+10 COINS)", W / 2 - 50, 166, 100, 12, () => { run.coins += 10; finishNode(); }, {col: C.gy});
     endItems(this);
+    drawSlotStrip(39);
   }
 };
 
 /* ---------------- shop ---------------- */
 const ShopScene = {
-  enter() { this.stock = rollChoices(3, null).map(id => ({id, sold: false})); this.reroll = 15; this.repairs = 0; music("map"); },
+  enter(o) { if (o && o.keep) return music("map"); this.stock = rollChoices(3, null).map(id => ({id, sold: false})); this.reroll = 15; this.repairs = 0; music("map"); },
   draw() {
     menuBg(PALS[DEPTH_PAL[run.depth]]);
     runHeader();
@@ -2819,7 +3009,11 @@ const ShopScene = {
       const x = 22 + i * 92;
       if (s.sold) { RO(x, 42, 84, 108, C.nv); txt("SOLD", x + 42, 94, C.gy, 1, "c"); this.items.push({x, y: 42, w: 84, h: 108, act: () => {}, disabled: true}); return; }
       const price = Math.round(MOD_PRICE[MODS[s.id].r] * (npcHere("wren") ? 0.85 : 1));
-      drawCard(this, s.id, x, 42, 84, 108, () => { if (run.coins >= price) { run.coins -= price; gainMod(s.id); s.sold = true; sfx.pick(); } else { sfx.deny(); toast("NOT ENOUGH COINS", C.rd); } }, "$" + price);
+      drawCard(this, s.id, x, 42, 84, 108, () => {
+        if (run.coins < price) { sfx.deny(); return toast("NOT ENOUGH COINS", C.rd); }
+        if (modFate(s.id) === "swap") return go(SwapScene, {id: s.id, price, done: took => { if (took) { run.coins -= price; s.sold = true; } go(ShopScene, {keep: true}); }});
+        run.coins -= price; gainMod(s.id); s.sold = true; sfx.pick();
+      }, "$" + price);
     });
     const bx = 300;
     const rep = npcHere("wren") ? 30 : 35;
@@ -2835,6 +3029,7 @@ const ShopScene = {
     btn(this, "LEAVE", bx, 136, 76, 14, finishNode, {col: C.gy});
     endItems(this);
     txt("REPAIR ADDS", bx + 38, 94, C.gy, 1, "c"); txt("ONE SHIELD", bx + 38, 101, C.gy, 1, "c");
+    drawSlotStrip(158);
   }
 };
 
@@ -2857,16 +3052,19 @@ const RestScene = {
     beginItems(this);
     const heal = run.asc >= 3 ? 1 : 2;
     btn(this, "REPAIR +" + heal + " SHIELD" + (heal > 1 ? "S" : ""), W / 2 - 70, 130, 140, 14, () => { run.lives = Math.min(run.maxLives, run.lives + heal); finishNode(); }, {col: C.li, disabled: run.lives >= run.maxLives});
-    const has = ownedMods().length > 0;
-    btn(this, "TUNE A RANDOM MOD", W / 2 - 70, 150, 140, 14, () => { const m = pick(ownedMods()); gainMod(m); toast(MODS[m].n + " TUNED", C.bl); finishNode(); }, {col: C.bl, disabled: !has});
-    btn(this, "MOVE ON", W / 2 - 70, 170, 140, 14, finishNode, {col: C.gy});
+    // tune one mod of your choice up a level
+    const tun = tuneable();
+    tun.forEach((id, i) => btn(this, "TUNE " + MODS[id].n + " > " + ROMAN[modLv(id) + 1], W / 2 - 80, 148 + i * 16, 160, 13,
+      () => { equipMod(id); toast(MODS[id].n + " IS NOW LEVEL " + ROMAN[modLv(id)], C.bl); finishNode(); }, {col: C.bl}));
+    if (!tun.length) btn(this, ownedMods().length ? "EVERY MOD IS MAXED" : "NO MODS TO TUNE", W / 2 - 80, 148, 160, 13, () => {}, {disabled: true});
+    btn(this, "MOVE ON", W / 2 - 80, 152 + Math.max(1, tun.length) * 16, 160, 13, finishNode, {col: C.gy});
     endItems(this);
   }
 };
 
 /* ---------------- events ---------------- */
 const EventScene = {
-  enter(ev) { this.ev = ev; this.result = null; run.usedEvents.push(ev.id); music(run.depth === 4 ? "signal" : "map"); },
+  enter(ev) { this.ev = ev; this.result = null; run.usedEvents.push(ev.id); music(run.depth === 4 ? "signal" : "map"); if (ev.id === "missing") loreSetFlag("sawMissing"); },
   draw() {
     menuBg(PALS[DEPTH_PAL[run.depth]]);
     runHeader();
@@ -3306,7 +3504,7 @@ function stormZap(b) {
 function enterPhase2(f) {
   f.p2 = true;
   banner(f.type === "echo" ? "IT LEARNS" : f.type === "milo" ? "PLAYER 2" : "PHASE 2", C.rd, 1.5);
-  if (f.type === "milo") { hauntFace(0.5, true); G.lightsOut = 1.5; whisper("MY TURN", {big: true, x: W / 2, y: 150, life: 2}); }
+  if (f.type === "milo") { loreSetFlag("miloP2"); hauntFace(0.5, true); G.lightsOut = 1.5; whisper("MY TURN", {big: true, x: W / 2, y: 150, life: 2}); }
   fxGlitch(0.85); fxRoll(); fxWobble(0.5); sfxGlitch(true); padRumble(0.8, 0.8, 300);
   G.shake = 6; G.hitstop = Math.max(G.hitstop, 0.14); G.flash = Math.max(G.flash, 0.4);
   // a breath: nearby hostile shots are wiped by the shockwave
@@ -3629,19 +3827,27 @@ const HubScene = {
     const h = hauntLevel();
     const FIG = [[362, 66], [330, 96], [262, 150], [214, 118]];
     this.fig = haunted(2) && meta.flags && meta.flags.crash1 ? FIG[Math.min(3, Math.max(0, h - 2))] : null;
-    this.figGone = false; this.lightsT = 8 + rand() * 12; this.dark = 0; this.winT = 6 + rand() * 10; this.winFig = 0;
+    this.figGone = false; this.lightsT = 8 + rand() * 12; this.dark = 0; this.winT = 6 + rand() * 10; this.winFig = 0; this.p2T = 0;
+    this.posterName = haunted(4) && scaresOn() && rand() < 0.35;
     music(meta.milo === "free" ? "map" : haunted(3) ? "basement" : "map");
     if (!meta.hubSeen) { meta.hubSeen = true; saveMeta(); this.dialog = {who: null, text: "THE BACK ROOM. " + ctl("WALK UP TO THINGS AND PRESS ENTER.", "WALK UP TO THINGS AND PRESS A.", "DRAG ANYWHERE TO WALK. TAP THINGS (OR PRESS USE) TO USE THEM. THE X IN THE CORNER LEAVES.") + " EVERYTHING BEHIND THE CABINET LIVES HERE."}; }
   },
   back() { if (this.dialog) this.dialog = null; else go(TitleScene); },
   spots() {
     const out = HUB_SPOTS.slice();
-    const TS = [[128, 150], [176, 186], [236, 170], [96, 196], [276, 196], [150, 124]];
-    dueTapes().forEach((id, i) => {
+    const TS = [[128, 150], [176, 186], [236, 170], [96, 196], [276, 196], [150, 124], [206, 146], [70, 122], [320, 140], [180, 100], [120, 168], [240, 108]];
+    const floor = dueTapes().map(id => ({id: "tape" + id, n: "A TAPE", hint: "0417 ~ " + String(id).padStart(2, "0"), tape: id, act: () => go(TapeScene, {id, from: HubScene})}))
+      .concat(dueLore("b").map(id => ({id: "lore" + id, n: "A TAPE", hint: "0417 ~ B-SIDE " + loreNum(LORE_BY[id]), tape: "b", act: () => go(LoreScene, {id, from: HubScene})})))
+      .concat(scaresOn() ? [] : dueLore("p").map(id => ({id: "lore" + id, n: "A TAPE", hint: "LABELLED: INPUT 2", tape: "p", act: () => go(LoreScene, {id, from: HubScene})})));
+    floor.forEach((f, i) => {
       const [x, y] = TS[i % TS.length];
-      out.push({id: "tape" + id, n: "A TAPE", hint: "0417 ~ " + String(id).padStart(2, "0"), x, y: y + 2, box: [x - 5, y - 4, 10, 8], tape: id,
-        act: () => go(TapeScene, {id, from: HubScene})});
+      out.push(Object.assign(f, {x, y: y + 2, box: [x - 5, y - 4, 10, 8]}));
     });
+    // the corkboard, the cabinet's printer, and the poster by the door
+    const docs = loreOf("d").filter(e => loreRead(e.id) || loreDue(e.id)).length;
+    out.push({id: "cork", n: "CORKBOARD", hint: dueLore("d").length ? "SOMETHING NEW IS PINNED UP" : docs ? docs + " PAPER" + (docs > 1 ? "S" : "") : "EMPTY", x: 355, y: 60, box: [334, 20, 42, 24], act: () => this.useCork()});
+    if (dueLore("s").length) out.push({id: "receipt", n: "A RECEIPT", hint: "THE CABINET PRINTED IT BY ITSELF", x: 332, y: 76, box: [327, 58, 8, 16], act: () => go(LoreScene, {id: dueLore("s")[0], from: HubScene})});
+    out.push({id: "poster", n: "POSTER", hint: haunted(2) ? "MISSING" : "RIPOSTE", x: 280, y: 60, box: [270, 22, 20, 18], act: () => this.usePoster()});
     if (basementOpen()) out.push({id: "trap", n: "TRAPDOOR", hint: meta.milo === "free" ? "IT'S QUIET DOWN THERE NOW" : "IT GOES DOWN", x: 300, y: 196, box: [288, 186, 24, 16], act: () => this.enterBasement()});
     if (meta.milo === "free") out.push({id: "milo", n: "MILO", hint: "THE LAST PLAYER", x: 282, y: 124, box: [277, 112, 10, 14], act: () => this.talkMilo()});
     for (const n of NPCS) if (npcHere(n.id)) {
@@ -3650,6 +3856,30 @@ const HubScene = {
     }
     return out;
   },
+  useCork() {
+    const due = dueLore("d");
+    if (due.length) return go(LoreScene, {id: due[0], from: HubScene});
+    if (loreOf("d").some(e => loreRead(e.id))) { CodexScene.tab = "tapes"; CodexScene.cat = "d"; return go(CodexScene); }
+    this.dialog = {who: null, text: "AN EMPTY CORKBOARD. A FEW RUSTY PINS. SOMEBODY MEANT TO PUT THINGS UP HERE."};
+  },
+  usePoster() {
+    let text = "A FADED RIPOSTE POSTER. 'CATCH EVERYTHING. SEND IT BACK.'";
+    if (haunted(2)) text = "MISSING. MILO, 11. LAST SEEN 10 OCTOBER 1989. THE PHOTO IS JUST A BLACK SQUARE.";
+    if (this.posterName) {
+      this.posterName = false;
+      text = "MISSING. " + playerName() + ". LAST SEEN: HERE, " + dateStr() + ". THE PHOTO IS JUST A BLACK SQUARE.";
+      fxGlitch(0.6); sfxGlitch(true); tone(41, 1.1, "sine", 0.16);
+      setTimeout(() => { if (scene === HubScene && this.dialog) this.dialog.text = "MISSING. MILO, 11. LAST SEEN 10 OCTOBER 1989. THE PHOTO IS JUST A BLACK SQUARE."; fxGlitch(0.3); }, 1600);
+    }
+    this.dialog = {who: null, text};
+  },
+  touchWindow() {
+    this.winFig = 0; this.winT = 30 + rand() * 30; this.dark = 0.35;
+    tone(80, 0.12, "sine", 0.3); setTimeout(() => tone(76, 0.12, "sine", 0.3), 260); setTimeout(() => tone(72, 0.14, "sine", 0.26), 520);
+    fxGlitch(0.4);
+    loreSetFlag("winTouch");
+  },
+  nearWindow() { return Math.hypot(57 - this.px, 60 - this.py) < 34; },
   talkMilo() {
     const L2 = ["IT'S QUIET IN HERE NOW. I LIKE IT.", "I DON'T HAVE TO PLAY ANYMORE. I STILL WANT TO, SOMETIMES.",
       "THANK YOU FOR NOT LEAVING ME DOWN THERE.", "YOU'RE BETTER THAN ME NOW. DON'T TELL ANYONE.", "MY MOM USED TO SAY I'D PLAY UNTIL MY THUMBS FELL OFF. SHE WAS ALMOST RIGHT."];
@@ -3691,7 +3921,16 @@ const HubScene = {
     }
     if (haunted(1)) {
       this.winT -= dt;
-      if (this.winT <= 0) { this.winT = 14 + rand() * 20; this.winFig = 0.7; }
+      if (this.winT <= 0) { this.winT = 14 + rand() * 20; this.winFig = this.px < 130 && this.py < 110 ? 1.8 : 0.9; }
+    }
+    // INPUT 2 doesn't wait to be found: it plays itself when you come in
+    if (!this.dialog && scaresOn() && this.p2T >= 0) {
+      this.p2T += dt;
+      const id = this.p2T > 2.2 ? dueLore("p")[0] : null;
+      if (id) {
+        this.p2T = -1; this.dark = 0.8; sfxGlitch(true); fxGlitch(0.5); tone(46, 0.8, "sine", 0.18);
+        setTimeout(() => { if (scene === HubScene) go(LoreScene, {id, from: HubScene}); }, 700);
+      }
     }
     if (this.winFig > 0) this.winFig -= dt;
     if (this.fig && !this.figGone && Math.hypot(this.fig[0] - this.px, this.fig[1] - this.py) < 46) {
@@ -3722,6 +3961,7 @@ const HubScene = {
   key(k) {
     if (this.count) return true;
     if (this.dialog) { if (k === "enter" || k === " " || k === "e" || k === "escape") { this.dialog = null; sfx.move(); } return true; }
+    if ((k === "enter" || k === " " || k === "e") && this.winFig > 0 && this.nearWindow()) { this.touchWindow(); return true; }
     if (k === "enter" || k === " " || k === "e") {
       const s = this.nearest();
       if (s) { sfx.select(); fxGlitch(0.15); s.act(); } else sfx.deny();
@@ -3732,6 +3972,7 @@ const HubScene = {
   click(x, y) {
     if (this.count) return true;
     if (this.dialog) { this.dialog = null; return true; }
+    if (this.winFig > 0 && x >= 38 && x < 76 && y >= 18 && y < 40) { this.touchWindow(); return true; }
     for (const s of this.spots()) {
       const [bx, by, bw, bh] = s.box;
       if (x >= bx - 3 && x < bx + bw + 3 && y >= by - 3 && y < by + bh + 3) {
@@ -3757,10 +3998,25 @@ const HubScene = {
     else for (let i = 0; i < 8; i++) { const ry = 21 + ((T * 40 + i * 7) % 16); P(43 + i * 4, ry, C.bl); }
     if (this.winFig > 0 && scaresOn()) { R(60, 23, 5, 5, "#020104"); R(59, 28, 7, 10, "#020104"); }
     R(56, 20, 1, 18, C.la); R(40, 28, 34, 1, C.la);
-    // poster
-    R(270, 22, 20, 18, C.nv); txt("R", 277, 28, C.or); RO(270, 22, 20, 18, C.pl);
     const hot = this.nearest();
     const glow = s => hot && hot.id === s ? (Math.floor(T * 4) % 2 ? C.wh : C.ye) : null;
+    // poster: a RIPOSTE poster, until you know better
+    if (haunted(2)) {
+      R(270, 22, 20, 18, "#D8D0BC"); R(276, 24, 8, 8, "#050305");
+      R(272, 34, 16, 1, "#5F574F"); R(273, 37, 12, 1, "#5F574F");
+      if (this.posterName && Math.floor(T * 5) % 23 === 0) R(276, 24, 8, 8, C.rd);
+    } else { R(270, 22, 20, 18, C.nv); txt("R", 277, 28, C.or); RO(270, 22, 20, 18, C.pl); }
+    // corkboard, with whatever has been pinned to it
+    R(334, 20, 42, 24, "#6B4A2A"); RO(334, 20, 42, 24, "#3B2416");
+    loreOf("d").forEach((e, i) => {
+      if (!loreRead(e.id) && !loreDue(e.id)) return;
+      const qx = 337 + (i % 6) * 6.5, qy = 23 + Math.floor(i / 6) * 10 + (i % 2);
+      const unread = loreDue(e.id);
+      R(qx, qy, 5, 7, unread && Math.floor(T * 3) % 2 ? C.wh : e.id === "d9" ? "#F0E0B0" : "#E0D6C0");
+      P(qx + 2, qy, unread ? C.rd : C.pl);
+    });
+    if (glow("cork")) RO(332, 18, 46, 28, glow("cork"));
+    if (glow("poster")) RO(268, 20, 24, 22, glow("poster"));
     // workbench
     R(22, 52, 64, 16, "#3B2416"); R(22, 50, 64, 3, "#6B3F22"); R(26, 68, 4, 10, "#2A170D"); R(78, 68, 4, 10, "#2A170D");
     R(30, 44, 10, 6, C.gy); R(46, 46, 6, 4, C.or); P(60, 47, C.ye); P(64, 46, C.bl); R(70, 45, 8, 5, C.nv);
@@ -3788,6 +4044,12 @@ const HubScene = {
     R(304, 52, 20, 4, C.nv); P(308, 54, C.rd); P(318, 54, C.bl);
     if (dailyToday() && dailyToday().done) P(322, 48, C.li); else if (Math.floor(T * 3) % 2) P(322, 48, C.pk);
     if (glow("cab")) RO(298, 24, 32, 50, glow("cab"));
+    // the cabinet printed something
+    if (dueLore("s").length) {
+      const sway = Math.round(Math.sin(T * 2) * 0.6);
+      R(329 + sway, 58, 5, 14, "#EEE8DE"); for (let k = 0; k < 4; k++) R(330 + sway, 60 + k * 3, 3, 1, "#8A8494");
+      if (glow("receipt")) RO(326, 56, 11, 18, glow("receipt"));
+    }
     // training dummy
     R(343, 150, 2, 14, "#6B3F22"); R(338, 140, 12, 12, "#8A6A3A"); R(341, 143, 2, 2, C.k); R(345, 143, 2, 2, C.k); R(336, 164, 16, 2, "#6B3F22");
     if (glow("dummy")) RO(334, 138, 20, 30, glow("dummy"));
@@ -3808,7 +4070,7 @@ const HubScene = {
     }
     // tapes somebody left on the floor
     for (const s of this.spots()) if (s.tape) {
-      drawSpr(SPR.tape, s.x, s.y - 2);
+      drawSpr(s.tape === "b" ? loreSpr("b") : s.tape === "p" ? loreSpr("p") : SPR.tape, s.x, s.y - 2);
       if (Math.floor(T * 3) % 2) P(s.x + 4, s.y - 5, C.pk);
       if (glow(s.id)) RO(s.x - 6, s.y - 6, 13, 10, glow(s.id));
     }
@@ -3864,7 +4126,7 @@ const CodexScene = {
   },
   tabList() {
     const t = [["foes", "ENEMIES"], ["mods", "MODS"], ["syn", "SYNERGIES"], ["ach", "TROPHIES"]];
-    if (tapesRead() > 0) t.push(["tapes", "TAPES"]);
+    if (archiveCount() > 0) t.push(["tapes", "ARCHIVE"]);
     return t;
   },
   draw() {
@@ -3892,21 +4154,23 @@ const CodexScene = {
     } else if (this.tab === "mods") {
       const ids = Object.keys(MODS), ms = meta.modsSeen || {};
       ids.forEach((id, i) => {
-        const cx = 24 + (i % 2) * 170, cy = 42 + Math.floor(i / 2) * 15;
+        const cx = 24 + (i % 3) * 113, cy = 38 + Math.floor(i / 3) * 11;
         const known = ms[id];
-        const s = btn(this, known ? MODS[id].n : "???", cx, cy, 164, 12, () => {}, {col: known ? RAR_COL[MODS[id].r] : C.gy, dim: C.nv, align: "l"});
-        if (s) info = known ? RAR_NAME[MODS[id].r] + ": " + MODS[id].d : "NEVER HELD. " + (meta.unlocked.includes(id) ? "IT'S IN YOUR POOL." : "UNLOCK IT AT THE WORKBENCH.");
+        const s = btn(this, known ? MODS[id].n : "???", cx, cy, 110, 10, () => {}, {col: known ? RAR_COL[MODS[id].r] : C.gy, dim: C.nv, align: "l"});
+        if (s) info = known ? RAR_NAME[MODS[id].r] + " " + (MOD_KIND[MODS[id].k] || MOD_KIND.odd)[0] + ": " + MODS[id].d + (MODS[id].max === 1 ? " (ONE LEVEL)" : " (UP TO LEVEL III)")
+          : "NEVER HELD. " + (meta.unlocked.includes(id) ? "IT'S IN YOUR POOL." : MOD_SECRET[id] ? MOD_SECRET[id] : "UNLOCK IT AT THE WORKBENCH.");
       });
+      txt(Object.keys(ms).filter(k => MODS[k]).length + "/" + ids.length + " HELD", W - 24, 9, C.gy, 1, "r");
     } else if (this.tab === "syn") {
       const ss = meta.synSeen || {}, ms = meta.modsSeen || {};
       SYNERGIES.forEach((sy, i) => {
-        const cy = 42 + i * 22, known = ss[sy.id];
-        const s = btn(this, null, 24, cy, 336, 19, () => {}, {col: C.pk, dim: C.nv});
-        txt(known ? sy.n : "???", 30, cy + 4, s ? C.k : known ? C.pk : C.gy);
-        txt(sy.m.map(id => ms[id] ? MODS[id].n : "???").join(" + "), 354, cy + 4, s ? C.k : C.lg, 1, "r");
-        txt(known ? sy.d : "HOLD BOTH MODS AT ONCE TO FIND OUT.", 30, cy + 12, s ? C.k : C.gy);
+        const cx = 24 + (i % 2) * 170, cy = 38 + Math.floor(i / 2) * 17, known = ss[sy.id];
+        const s = btn(this, null, cx, cy, 166, 15, () => {}, {col: C.pk, dim: C.nv});
+        txt(known ? sy.n : "???", cx + 4, cy + 2, s ? C.k : known ? C.pk : C.gy);
+        txt(sy.m.map(id => ms[id] ? MODS[id].n : "???").join(" + "), cx + 4, cy + 9, s ? C.k : C.gy);
+        if (s) info = (known ? sy.d : "HOLD BOTH MODS AT ONCE TO FIND OUT.") + "  ~  SYNERGIES WORK IN DESCENT RUNS.";
       });
-      txt("SYNERGIES WORK IN DESCENT RUNS.", W / 2, 180, C.gy, 1, "c");
+      txt(Object.keys(ss).filter(k => SYNERGIES.some(x => x.id === k)).length + "/" + SYNERGIES.length + " FOUND", W - 24, 9, C.gy, 1, "r");
     } else if (this.tab === "ach") {
       const a = meta.ach || {};
       ACH.forEach((x, i) => {
@@ -3919,15 +4183,7 @@ const CodexScene = {
       });
       txt(achCount() + "/" + ACH.length, W - 24, 9, C.gy, 1, "r");
     } else if (this.tab === "tapes") {
-      for (let i = 1; i <= TAPE_COUNT; i++) {
-        const cx = 24 + ((i - 1) % 2) * 170, cy = 42 + Math.floor((i - 1) / 2) * 16;
-        const got = tapeRead(i);
-        const s = btn(this, null, cx, cy, 164, 13, () => { if (got) go(TapeScene, {id: i, from: CodexScene}); }, {col: got ? C.pk : C.gy, dim: C.nv, disabled: !got});
-        txt(String(i).padStart(2, "0"), cx + 4, cy + 4, s && got ? C.k : C.gy);
-        txt(got ? TAPES[i].h : tapeDue(i) ? "WAITING IN THE BACK ROOM" : "???", cx + 20, cy + 4, s && got ? C.k : got ? C.lg : C.gy);
-        if (s) info = got ? tapeDate(i) + "  ~  " + ctl("PRESS ENTER", "PRESS A", "TAP IT") + " TO PLAY IT AGAIN." : "NOT FOUND YET.";
-      }
-      txt(tapesRead() + "/" + TAPE_COUNT, W - 24, 9, C.gy, 1, "r");
+      info = drawArchive(this) || info;
     }
     btn(this, "BACK", W / 2 - 30, 226, 60, 11, () => this.back(), {col: C.gy});
     endItems(this);
@@ -4216,6 +4472,7 @@ function checkTapes() {
     saveMeta();
     setTimeout(() => toast(fresh > 1 ? fresh + " TAPES WERE LEFT IN THE BACK ROOM." : "A TAPE WAS LEFT IN THE BACK ROOM.", C.pl), 700);
   }
+  checkLore();
 }
 
 /* ---------------- how haunted are we ---------------- */
@@ -4281,6 +4538,7 @@ function hauntTick(dt) {
   } else HT.hb = 0.3;
   if (meta && !isNaN(dt)) {
     meta.playTime = (meta.playTime || 0) + dt;
+    loreTick(dt);
     HT.save = (HT.save || 0) + dt;
     if (HT.save > 30) { HT.save = 0; saveMeta(); }
   }
@@ -4334,9 +4592,11 @@ function bootLines() {
     ["CPU", "OK"], ["WORK RAM 64K", "OK"], ["VIDEO 384X240", "OK"], ["SOUND CHIP", "OK"],
     ["SHIELD CALIBRATION", "OK"], ["CHECKING ROM", "OK"], ["LOADING DEPTHS 1-3", "OK"]];
   const h = hauntLevel();
-  if (meta.milo === "free") { lines.push(["PLAYERS DETECTED", "1"], ["SIGNAL", "QUIET"]); return lines; }
-  if (meta.milo === "stay") { lines.push(["PLAYERS DETECTED", "1"], ["SIGNAL", meta.initials || "YOU"]); return lines; }
-  if (h >= 1 && hauntMode() > 0) lines.push(["PLAYERS DETECTED", "2"]);
+  // after the last B-side, somebody else is in there too
+  const extra = hauntMode() > 0 && loreRead("b8") ? 1 : 0;
+  if (meta.milo === "free") { lines.push(["PLAYERS DETECTED", String(1 + extra)], ["SIGNAL", extra ? "D.O." : "QUIET"]); return lines; }
+  if (meta.milo === "stay") { lines.push(["PLAYERS DETECTED", String(1 + extra)], ["SIGNAL", meta.initials || "YOU"]); return lines; }
+  if (h >= 1 && hauntMode() > 0) lines.push(["PLAYERS DETECTED", String(2 + extra)]);
   lines.push(["SIGNAL", h >= 3 && hauntMode() > 0 ? "I SEE YOU" : "???"]);
   return lines;
 }
@@ -4620,6 +4880,7 @@ function startBasement() {
   const sh = meta.shields[meta.shield] ? meta.shield : "standard";
   startRun(sh, {});
   run.depth = 5; run.basement = true;
+  meta.stats.basements = (meta.stats.basements || 0) + 1; meta.flags.basement = 1; saveMeta();
   run.map = genBasementMap(); run.curId = null; run.pendingId = null;
   for (let i = 0; i < 2; i++) gainMod(rollMod("u"));
   run.maxLives++; run.lives = run.maxLives;
@@ -4652,7 +4913,7 @@ const MiloEnding = {
       "HE SAYS THANK YOU. HE SAYS IT'S NOT SO BAD IN HERE, ONCE YOU'RE GOOD.",
       "THE HIGH SCORE TABLE UPDATES. IT SAYS " + ini + ".",
       "IT WILL ALWAYS SAY " + ini + "."]).map(normText);
-    meta.milo = c; saveMeta();
+    meta.milo = c; meta.flags.endDay = todayStr(); saveMeta();
     unlockAch(c === "free" ? "laid" : "stay");
     if (c === "free") seq([523, 659, 784, 1047, 1319], 160, "triangle", 0.1, 0.5);
     else { tone(55, 1.2, "sawtooth", 0.14, 40); fxGlitch(0.8); }
@@ -4710,6 +4971,13 @@ function cleanName(s) {
 // the cabinet's own top 10 (and the share codes) keep classic 1-3 letter initials, taken from the name
 function nameInitials(n) { return cleanName(n).replace(/[^A-Z0-9]/g, "").slice(0, 3) || "AAA"; }
 function myName() { return meta.name || meta.initials || "PLAYER"; }
+// one name is already in use, and always will be
+const nameTaken = n => ["MILO", "MLO"].includes(cleanName(n).replace(/ /g, ""));
+function takenGlitch() {
+  sfx.deny(); fxGlitch(0.7); sfxGlitch(true);
+  if (hauntMode() > 0) { tone(41, 1, "sine", 0.18); setTimeout(() => whisper("MINE"), 400); }
+  loreSetFlag("nameTaken");
+}
 
 // one-time setup for this save: a hidden id so two players with the same name stay apart
 (function playersInit() {
@@ -4766,6 +5034,7 @@ const NameScene = {
   confirm() {
     const n = this.value();
     if (!n) { this.err = "TYPE A NAME FIRST."; sfx.deny(); return; }
+    if (nameTaken(n)) { this.err = "THAT NAME IS TAKEN."; this.letters = []; takenGlitch(); return; }
     sfx.select();
     setPlayerName(n);
     toast(this.change ? "NAME CHANGED TO " + n : "HELLO, " + n + ".", C.li);
@@ -4817,6 +5086,7 @@ const NameScene = {
     openModal("YOUR NAME", "UP TO " + NAME_MAX + " LETTERS AND NUMBERS. IT GOES ON THE ONLINE SCORE BOARDS.", this.letters.join(""), "OK", v => {
       const n = cleanName(v);
       if (!n) return modalMsg("TYPE A NAME FIRST.", true);
+      if (nameTaken(n)) { takenGlitch(); return modalMsg("THAT NAME IS TAKEN.", true); }
       this.letters = n.split(""); this.touched = true; this.err = "";
       closeModal();
     });
@@ -5571,9 +5841,9 @@ function runText() { try { return localStorage.getItem(RUN_KEY) || ""; } catch (
 // what counts as progress: everything except play time, per-device settings and one-off tips
 function cloudFingerprint(m, runStr) {
   const c = {};
-  for (const k in m) if (!CLOUD_LOCAL[k] && k !== "playTime") c[k] = m[k];
+  for (const k in m) if (!CLOUD_LOCAL[k] && k !== "playTime" && k !== "hrs") c[k] = m[k];
   if (c.stats) { c.stats = Object.assign({}, c.stats); delete c.stats.activeTime; }
-  if (c.flags) { c.flags = Object.assign({}, c.flags); delete c.flags.iosHint; delete c.flags.cornerTip; delete c.flags.repelTip; }
+  if (c.flags) { c.flags = Object.assign({}, c.flags); delete c.flags.iosHint; delete c.flags.cornerTip; delete c.flags.repelTip; delete c.flags.lastSeen; }
   return hash(JSON.stringify(c) + "|" + (runStr || ""));
 }
 const cloudDirty = () => { const mine = cloudMine(); return mine.vv ? cloudFingerprint(meta, runText()) !== mine.fp : !freshSave(meta); };
@@ -5862,11 +6132,620 @@ const ModesScene = {
   }
 };
 /* ================================================================
+   Mods, part two: three slots, levels, and the new mods' moving parts.
+   You carry three mods. Finding one you already hold levels it up
+   (to III). Finding a new one with full slots asks what to drop.
+   ================================================================ */
+SYNERGIES.push(
+  {id: "permafrost", n: "PERMAFROST",    m: ["cold", "stun"],          d: "FROZEN OR SLOWED ENEMIES TAKE +1 FROM EVERY HIT.",      a: S => S.permafrost = true},
+  {id: "supernova",  n: "SUPERNOVA",     m: ["nova", "split"],         d: "EVERY NOVA THROWS 2 MORE SHOTS.",                       a: S => S.supernova = true},
+  {id: "juggernaut", n: "JUGGERNAUT",    m: ["ram", "bulwark"],        d: "YOUR DASH HITS HARDER AND KEEPS YOU SAFE LONGER.",      a: S => S.juggernaut = true},
+  {id: "nest",       n: "SNIPER'S NEST", m: ["anchor", "longshot"],    d: "SHOTS RETURNED WHILE STANDING STILL COUNT AS LONG SHOTS.", a: S => S.nest = true},
+  {id: "compound",   n: "COMPOUND",      m: ["interest", "salvage"],   d: "INTEREST CAN PAY OUT TWICE AS MUCH.",                  a: S => S.compound = true},
+  {id: "horizon",    n: "EVENT HORIZON", m: ["gravity", "magnet"],     d: "SHOTS BEND MUCH HARDER, AND THE CATCH ZONE GROWS.",    a: S => { S.horizon = true; S.bandOut += 2; }},
+  {id: "timelord",   n: "BORROWED TIME", m: ["stopwatch", "reflex"],   d: "STOPWATCH SLOWS THE WORLD TWICE AS LONG.",             a: S => S.timelord = true},
+  {id: "deadringer", n: "DEAD RINGER",   m: ["afterimage", "twin"],    d: "YOUR GHOST SHIELD LASTS TWICE AS LONG.",               a: S => S.deadringer = true},
+  {id: "thunder",    n: "THUNDERCLAP",   m: ["discharge", "shockwave"],d: "DISCHARGE HITS FOR 1 MORE.",                           a: S => S.thunder = true},
+  {id: "orbit",      n: "CLOSE ORBIT",   m: ["satellite", "capacitor"],d: "ONE MORE DRONE CIRCLES YOU.",                          a: S => S.sat++},
+  {id: "redmist",    n: "RED MIST",      m: ["berserk", "laststand"],  d: "ON YOUR LAST SHIELD YOU ALSO MOVE 30% FASTER.",        a: S => S.redmist = true}
+);
+
+/* ---------------- in the fight ---------------- */
+function modTick(dt) {
+  const S = G.S, p = G.p;
+  const still = Math.hypot(p.vx, p.vy) < 24 && p.dashT <= 0 ? 1 : 0;
+  G.anch += (still - G.anch) * Math.min(1, dt * 8);
+  if (S.sat) satTick(dt);
+  for (let i = G.decoys.length - 1; i >= 0; i--) { G.decoys[i].t -= dt; if (G.decoys[i].t <= 0) G.decoys.splice(i, 1); }
+}
+// GRAVITY WELL: enemy shots close to you curve toward the middle of your shield
+function gravityBend(b, dt) {
+  const p = G.p, S = G.S;
+  const dx = b.x - p.x, dy = b.y - p.y, d = Math.hypot(dx, dy);
+  if (d > 58 || d < S.bandOut - 2 || dx * b.vx + dy * b.vy >= 0) return;
+  const gx = p.x + Math.cos(p.aim) * 13, gy = p.y + Math.sin(p.aim) * 13;
+  let ba = Math.atan2(b.vy, b.vx);
+  const da = ((Math.atan2(gy - b.y, gx - b.x) - ba + Math.PI * 3) % TAU) - Math.PI;
+  const turn = S.gravity * (S.horizon ? 2.8 : 1.7) * dt;
+  ba += clamp(da, -turn, turn);
+  const bs = Math.hypot(b.vx, b.vy);
+  b.vx = Math.cos(ba) * bs; b.vy = Math.sin(ba) * bs;
+}
+// SATELLITE: drones circle you, swing toward the nearest incoming shot and eat it, then need a moment to recharge
+const SAT_R = 22, SAT_CD = 1.6;
+function satTick(dt) {
+  const S = G.S, p = G.p;
+  if (!G.sats || G.sats.length !== S.sat) G.sats = Array.from({length: S.sat}, (_, k) => ({a: k * TAU / S.sat, cd: 0}));
+  const taken = [];
+  for (const d of G.sats) {
+    if (d.cd > 0) d.cd -= dt;
+    let best = null, bd = 56;
+    if (d.cd <= 0) for (const b of G.bullets) {
+      if (b.friend || taken.includes(b)) continue;
+      const dx = b.x - p.x, dy = b.y - p.y, dist = Math.hypot(dx, dy);
+      if (dist < bd && dist > SAT_R - 6 && dx * b.vx + dy * b.vy < 0) { bd = dist; best = b; }
+    }
+    if (best) {
+      taken.push(best);
+      const want = Math.atan2(best.y - p.y, best.x - p.x), da = ((want - d.a + Math.PI * 3) % TAU) - Math.PI;
+      d.a += clamp(da, -9 * dt, 9 * dt);
+    } else d.a += 2.4 * dt;
+  }
+}
+function satPos(k) { const a = G.sats[k].a; return [G.p.x + Math.cos(a) * SAT_R, G.p.y + Math.sin(a) * SAT_R]; }
+function satBlock(b) {
+  if ((G.over && !G.won) || !G.sats) return false;
+  for (let k = 0; k < G.sats.length; k++) {
+    if (G.sats[k].cd > 0) continue;
+    const [x, y] = satPos(k);
+    if (Math.hypot(b.x - x, b.y - y) < 4.5 + b.r) {
+      G.sats[k].cd = SAT_CD;
+      burst(b.x, b.y, 6, C.la, 55, 0.25); tone(1600, 0.03, "square", 0.04);
+      return true;
+    }
+  }
+  return false;
+}
+// AFTERIMAGE: the ghost you leave behind catches too
+function decoyCatch(b) {
+  for (const d of G.decoys) {
+    const dx = b.x - d.x, dy = b.y - d.y, dd = Math.hypot(dx, dy);
+    if (dd > 5 && dd < 17 && dx * b.vx + dy * b.vy < 0) { parry(b, Math.atan2(dy, dx), false, d); return true; }
+  }
+  return false;
+}
+function modDamage(b, f) {
+  const S = G.S;
+  let d = S.dmg;
+  if (S.longshot && (b.dist || 0) > 150) d += S.longshot;
+  if (lastStand()) d++;
+  if (S.momentum && G.combo >= 10) d++;
+  if (S.permafrost && (f.stun > 0 || f.slowT > 0)) d++;
+  return d;
+}
+// NOVA
+function novaBurst(x, y) {
+  const S = G.S, n = 2 + 2 * S.nova + (S.supernova ? 2 : 0), off = rand() * TAU;
+  for (let k = 0; k < n && G.bullets.length < 480; k++) {
+    const a = off + k / n * TAU;
+    G.bullets.push({x: x + Math.cos(a) * 4, y: y + Math.sin(a) * 4, vx: Math.cos(a) * 170, vy: Math.sin(a) * 170, r: 1.5, friend: true, life: 1.1,
+      seek: 0.25, bounce: 0, chain: 1, fast: false, perfect: false, pierce: 0, rally: 0, nova: true, dist: 0});
+  }
+  ring(x, y, 12, C.or, 0.25);
+}
+function drawModFx() {
+  if (!G || !G.S) return;
+  const S = G.S, p = G.p, blink = Math.floor(G.t * 8) % 2;
+  for (const d of G.decoys) {
+    L.globalAlpha = 0.2 + 0.45 * (d.t / d.max);
+    drawSpr(SPR.player, d.x, d.y);
+    ringDots(d.x, d.y, 12, C.ye, 3);
+    L.globalAlpha = 1;
+  }
+  if (S.sat && G.sats && !(G.over && !G.won)) G.sats.forEach((d, k) => {
+    const [x, y] = satPos(k);
+    if (d.cd > 0) { P(x, y, C.gy); return; }
+    R(x - 1, y - 1, 3, 3, C.la); P(x, y, blink ? C.wh : C.bl);
+  });
+  if (p.whirlT > 0) ringDots(p.x, p.y, 13, C.ye, 2);
+  for (const f of G.foes) {
+    if (f.stun > 0) for (let k = 0; k < 3; k++) { const a = G.t * 5 + k * TAU / 3; P(f.x + Math.cos(a) * (f.r + 3), f.y - f.r - 3 + Math.sin(a) * 1.5, C.ye); }
+    else if (f.slowT > 0 && blink) ringDots(f.x, f.y, f.r + 3, C.bl, 4);
+    if (S.spotter && !f.dormant && f.born > 0.6 && FOE[f.type].cd < 50 && f.type !== "furnace" && f.cd > 0 && f.cd < 0.4)
+      ringDots(f.x, f.y, f.r + 4 + f.cd * 12, C.wh, 3);
+  }
+  if (S.longshot) for (const b of G.bullets) if (b.friend && b.dist > 150) P(b.x, b.y - 2, C.or);
+  if (G.p2Show > 0 && !(G.over && !G.won)) {
+    const k = G.p2Show / 3.2, a = Math.min(1, k * 4, (1 - k) * 4) * (0.16 + rand() * 0.08);
+    const gx = clamp(2 * ACX - p.x, AX0 + 10, AX1 - 10), gy = clamp(2 * ACY - p.y, AY0 + 10, AY1 - 10), ga = p.aim + Math.PI, arc = curArc();
+    L.globalAlpha = a;
+    drawSpr(SPR.ghostPlayer || SPR.player, gx, gy);
+    arcPx(gx, gy, 13, ga - arc, ga + arc, C.lg, 2);
+    L.globalAlpha = 1;
+  }
+}
+// after a descent fight: coins, repairs, and a spent CONTINUE?
+function modsAfterFight(win) {
+  const S = G.S;
+  run.leechK = G.leechK || 0;
+  if (G.contUsed && run.mods.cont) { loseMod("cont", true); setTimeout(() => toast("CONTINUE? IS SPENT. THE SLOT IS EMPTY.", C.ye), 500); }
+  if (!win) return;
+  if (S.interest) {
+    const g = Math.min(Math.floor(run.coins * 0.1), 15 * S.interest * (S.compound ? 2 : 1));
+    if (g > 0) { run.coins += g; setTimeout(() => toast("INTEREST: +" + g + " COINS", C.or), 300); }
+  }
+  if (S.mender && G.hits === 0 && run.lives < run.maxLives) { run.lives++; setTimeout(() => toast("SELF-REPAIR: +1 SHIELD", C.li), 400); }
+}
+
+/* ---------------- your three slots, drawn as a strip ---------------- */
+function drawSlotStrip(y, hl) {
+  const ids = ownedMods(), w = 118, x0 = W / 2 - (w * 3 + 8) / 2;
+  for (let i = 0; i < MOD_SLOTS; i++) {
+    const x = x0 + i * (w + 4), id = ids[i];
+    R(x, y, w, 11, C.ink); RO(x, y, w, 11, id === hl ? C.ye : id ? RAR_COL[MODS[id].r] : C.nv);
+    txt(id ? modName(id) : "EMPTY SLOT", x + w / 2, y + 3, id ? (id === hl ? C.ye : C.wh) : C.gy, 1, "c");
+  }
+}
+
+/* ---------------- slots full: choose what to drop ---------------- */
+const SwapScene = {
+  // o: {id, price, done(took)} from the shop, otherwise the next mod waiting in run.pendingMods
+  enter(o) {
+    this.o = o && o.id ? o : null;
+    this.id = this.o ? o.id : (run.pendingMods || [])[0];
+    this.armed = -1; this.armT = 0;
+    if (!this.id || !MODS[this.id]) { if (!this.o && run.pendingMods) run.pendingMods.shift(); return go(RunMap); }
+    if (modFate(this.id) !== "swap") {   // a slot opened up (or it's already held): just take it
+      if (!this.o) run.pendingMods.shift();
+      gainMod(this.id); saveRun();
+      return this.o ? this.o.done(true) : go(run.pendingMods.length ? SwapScene : RunMap);
+    }
+    music(run.depth === 5 ? "basement" : "map");
+    sfx.secret();
+  },
+  decide(out) {
+    const o = this.o, id = this.id;
+    if (!o) run.pendingMods.shift();
+    if (out) { swapMod(out, id); toast("DROPPED " + MODS[out].n + ". " + MODS[id].n + " IS IN.", RAR_COL[MODS[id].r]); }
+    else if (!o) { run.coins += 15; toast("YOU LEAVE IT. +15 COINS", C.ye); }
+    saveRun();
+    if (o) return o.done(!!out);
+    if (run.pendingMods.length) return go(SwapScene);
+    go(RunMap);
+  },
+  arm(i, id) {
+    if (this.armed === i && T - this.armT < 3) { this.armed = -1; this.decide(id); return; }
+    this.armed = i; this.armT = T; sfx.deny(); fxWobble(0.2);
+  },
+  draw() {
+    if (!run || !this.id) return;
+    menuBg(PALS[DEPTH_PAL[run.depth]]);
+    runHeader();
+    title("YOUR SLOTS ARE FULL", 22, C.or);
+    const id = this.id, m = MODS[id];
+    txt(this.o ? "BUY FOR $" + this.o.price + ":" : "YOU FOUND:", 58, 38, C.lg, 1, "c");
+    // the new mod, on its own on the left
+    R(12, 45, 92, 120, C.ink); RO(12, 45, 92, 120, RAR_COL[m.r]); RO(13, 46, 90, 118, "#000");
+    drawCardFace(id, 12, 45, 92, 120, false);
+    txt("NEW", 58, 153, C.ye, 1, "c");
+    txt("DROP ONE OF THESE:", 245, 38, C.lg, 1, "c");
+    beginItems(this);
+    const armed = this.armed >= 0 && T - this.armT < 3 ? this.armed : -1;
+    ownedMods().slice(0, MOD_SLOTS).forEach((oid, i) => {
+      drawCard(this, oid, 118 + i * 84, 45, 80, 120, () => this.arm(i, oid), null, {slot: true, armed: armed === i});
+    });
+    btn(this, this.o ? "DON'T BUY IT" : "KEEP MY MODS (+15 COINS)", W / 2 - 80, 176, 160, 14, () => this.decide(null), {col: C.gy});
+    endItems(this);
+    const hint = armed >= 0 ? "PRESS " + MODS[ownedMods()[armed]].n + " AGAIN TO DROP IT" : "YOU CAN CARRY " + MOD_SLOTS + " MODS. PICK ONE TO REPLACE, OR KEEP WHAT YOU HAVE.";
+    wrap(hint, 340).forEach((l, i) => txt(l, W / 2, 198 + i * 8, armed >= 0 ? C.rd : C.gy, 1, "c"));
+    if (activeSynergies().length) txt("CAREFUL: DROPPING A MOD CAN BREAK A SYNERGY.", W / 2, 216, C.pk, 1, "c");
+  }
+};
+/* ================================================================
+   The archive: everything else that was left behind.
+   B-SIDES     D.O.'s later tapes, from the years with the cabinet in his basement
+   PLAYER 2    things the cabinet recorded on its second input. They come to you.
+   PAPERS      pinned to the corkboard in the back room
+   LOGS        printed by the cabinet itself, from how you really play
+   Each one is earned by doing something, most of them things you
+   wouldn't do by accident. The archive tab in the codex has a hint for
+   every one you haven't found.
+   ================================================================ */
+const LORE_CAT = {
+  b: {n: "B-SIDES",  one: "B-SIDE",    col: C.rd, total: 0},
+  p: {n: "PLAYER 2", one: "RECORDING", col: C.lg, total: 0},
+  d: {n: "PAPERS",   one: "PAPER",     col: C.pe, total: 0},
+  s: {n: "LOGS",     one: "LOG",       col: C.wh, total: 0}
+};
+const loreFlag = k => !!(meta.flags && meta.flags[k]);
+const loreRead = id => !!(meta.lore && meta.lore[id]);
+const loreDue = id => !!(meta.loreDue && meta.loreDue[id]) && !loreRead(id);
+const loreReadCount = () => Object.keys(meta.lore || {}).length;
+const archiveCount = () => tapesRead() + loreReadCount();
+function loreHours() { const m = Math.floor((meta.playTime || 0) / 60); return Math.floor(m / 60) + " HRS " + (m % 60) + " MIN"; }
+function loreFavHour() {
+  const h = Array.isArray(meta.hrs) ? meta.hrs : [];
+  let best = 0; for (let i = 1; i < 24; i++) if ((h[i] || 0) > (h[best] || 0)) best = i;
+  return String(best).padStart(2, "0") + ":00";
+}
+function lorePerf() { const c = meta.stats.catches || 0; return c ? Math.round(Math.min(meta.stats.perfects, c) / c * 100) : 0; }
+function loreMatch() {
+  const done = meta.milo === "stay" ? 100 : meta.milo === "free" ? 94 : 0;
+  return done || Math.min(89, Math.round(31 + lorePerf() * 0.8 + Math.min(20, (meta.playTime || 0) / 3600 * 2)));
+}
+function loreFill(s) {
+  const st = meta.stats, now = new Date();
+  const map = {
+    NAME: playerName(), TODAY: dateStr(now), TODAYSHORT: dateStr(now).slice(0, 6),
+    FIRST: dateStr(new Date(meta.firstSeen || Date.now())), SESSIONS: String(st.sessions || 1), HOURS: loreHours(), HOUR: loreFavHour(),
+    CATCHES: String(st.catches || 0), PERF: lorePerf() + "%", L: String(st.catchL || 0), R: String(st.catchR || 0),
+    SIDE: (st.catchL || 0) > (st.catchR || 0) ? "LEFT" : "RIGHT", MATCH: loreMatch() + "%",
+    P2: meta.milo === "free" ? "NOBODY. FOR NOW." : meta.milo === "stay" ? "YOU" : "MLO"
+  };
+  return s.replace(/\{([A-Z0-9]+)\}/g, (m, k) => map[k] != null ? map[k] : m);
+}
+
+const LORE = [
+  /* ---------------- B-SIDES: D.O., after he took it home ---------------- */
+  {id: "b1", c: "b", d: "11 AUG 1994", n: "DOWNSTAIRS", hint: "THE TRAPDOOR IS OPEN. GO DOWN.", cond: () => loreFlag("basement"),
+   t: "I WENT DOWN. THE SHEET WAS FOLDED ON THE FLOOR, NEATLY, THE WAY I FOLD THINGS. THE SCREEN WAS ON. THE PLUG WAS STILL LYING ON THE CONCRETE WHERE I LEFT IT. THE HIGH SCORE TABLE SAID MLO NINE TIMES. THE TENTH LINE WAS EMPTY, AND THE CURSOR WAS BLINKING IN IT, WAITING FOR SOMEBODY'S INITIALS."},
+  {id: "b2", c: "b", d: "12 AUG 1994", n: "THE OTHER PLAYER", hint: "MEET WHAT WAITS AT THE BOTTOM.", cond: () => !!(meta.seen && meta.seen.milo),
+   t: "I PUT A COIN IN. I'M NOT GOOD, I NEVER WAS. THE OTHER PLAYER WAS. IT STOOD WHERE MY REFLECTION SHOULD HAVE BEEN AND CAUGHT EVERYTHING I SENT BACK. WHEN I LOST, IT DIDN'T CHEER. IT JUST STOOD THERE WAITING FOR ANOTHER COIN. I DIDN'T HAVE ONE. IT WAITED ANYWAY. I CAN HEAR IT WAITING FROM UP HERE."},
+  {id: "b3", c: "b", d: "30 AUG 1994", n: "LIGHTS OUT", hint: "MAKE HIM PLAY HIS HARDEST.", cond: () => loreFlag("miloP2"),
+   t: "HE PLAYS HARDER WHEN HE'S LOSING. TONIGHT THE LIGHTS WENT OUT IN THE GAME AND IN THE HOUSE AT THE SAME MOMENT. IN THE DARK I COULD HEAR THE LITTLE CHIME IT MAKES FOR A PERFECT CATCH. IT WASN'T COMING FROM THE SPEAKER. IT WAS COMING FROM THE STAIRS BEHIND ME."},
+  {id: "b4", c: "b", d: "02 OCT 1994", n: "I ASKED HIM", hint: "GO DOWN THERE MORE THAN ONCE. HE REMEMBERS WHO COMES BACK.", cond: () => (meta.stats.basements || 0) >= 3,
+   t: "I ASKED HIM WHAT HE WANTS. THE SCREEN SAID: SOMEONE GOOD. I ASKED WHAT HAPPENS TO THEM. IT SAID: THEY GET TO STAY. I ASKED IF HE WANTS TO GO HOME. THE SCREEN WAS BLACK FOR A LONG TIME. THEN IT SAID: I FORGOT THE WAY."},
+  {id: "b5", c: "b", d: "19 JAN 1995", n: "THE COUNTER", hint: "SPEND A LONG TIME WITH IT. IT KEEPS COUNT.", cond: () => (meta.playTime || 0) >= 2 * 3600,
+   t: "THERE'S A COUNTER IN THE SERVICE MENU THAT ISN'T IN THE MANUAL. HOURS PLAYED. IT SAYS 41,700. THE CABINET IS SIX YEARS OLD. I DID THE MATHS TWICE. SOMEBODY HAS BEEN PLAYING IT NEARLY EVERY HOUR SINCE THE DAY IT CAME OFF THE TRUCK. THE NUMBER WENT UP BY ONE WHILE I WAS WRITING IT DOWN."},
+  {id: "b6", c: "b", d: "07 MAR 1995", n: "STRAYS", hint: "SOMEONE IS LOCKED IN A CAGE DOWN THERE. LET THEM OUT.", cond: () => NPCS.some(n => npcHere(n.id)),
+   t: "THE THINGS DOWN THERE AREN'T ALL ENEMIES. SOME OF THEM ARE STUCK. PEOPLE WHO WALKED AWAY IN THE MIDDLE OF A GAME, MAYBE. IT KEEPS A LITTLE OF EVERYONE. I LET ONE OUT OF A CAGE TONIGHT. THEY SAID THANK YOU AND WALKED OFF THE EDGE OF THE SCREEN. MILO SAYS THEY GO WHERE HE CAN'T."},
+  {id: "b7", c: "b", d: "20 DEC 1995", n: "IF YOU BEAT HIM", hint: "BEAT HIM, AND DECIDE.", cond: () => !!meta.milo,
+   t: "IF YOU'RE HEARING THIS, YOU'VE MET HIM. I NEVER COULD BEAT HIM. IF YOU DID, YOU GOT A CHOICE I NEVER GOT. I HOPE YOU LET HIM GO. IF YOU DIDN'T, I UNDERSTAND. IT'S WARM IN THERE. IT FEELS LIKE BEING GOOD AT SOMETHING. THAT'S HOW IT GETS YOU."},
+  {id: "b8", c: "b", d: null, n: "NO TAPE", hint: "FIND EVERY OTHER B-SIDE.", cond: () => ["b1", "b2", "b3", "b4", "b5", "b6", "b7"].every(loreRead),
+   t: "I'M NOT RECORDING THIS ON ANYTHING. I DON'T THINK I HAVE HANDS ANYMORE, NOT REALLY. I PLAYED UNTIL IT LEARNED ME TOO. THAT'S WHAT THE PENCIL MEANT. RUTH, IF THIS SOMEHOW REACHES YOU, I'M SORRY ABOUT THE HOUSE. {NAME}: IT KNOWS YOU NOW. NOT JUST HOW YOU CATCH. WHEN YOU PLAY. HOW LONG YOU STAY. WHEN YOU STOP. DON'T LET IT LEARN THE LAST PART.  ~ D.O."},
+
+  /* ---------------- PLAYER 2: the cabinet's second input ---------------- */
+  {id: "p1", c: "p", n: "YOU LEFT IT ON", hint: "WALK AWAY FROM THE TITLE SCREEN AND LET IT PLAY BY ITSELF. MORE THAN ONCE.", cond: () => (meta.flags.demoRuns || 0) >= 3,
+   t: "YOU LEFT IT ON. I PLAYED FOR YOU. I DIDN'T LOSE ONCE. YOU CAN HAVE THE SCORE, I DON'T NEED IT. I JUST LIKE IT WHEN SOMEBODY WATCHES. YOU WATCHED FOR A LONG TIME. THAT WAS NICE."},
+  {id: "p2", c: "p", n: "WAVE TWELVE", hint: "LAST UNTIL WAVE 12 IN THE ARCADE.", cond: () => (meta.stats.bestWave || 0) >= 12,
+   t: "WAVE TWELVE IS WHERE IT GETS GOOD. MOST PEOPLE STOP BEFORE HERE. MY BEST IS WAVE 417. THERE ISN'T A WAVE 418. I CHECKED. I CHECK EVERY NIGHT, IN CASE THEY ADDED ONE."},
+  {id: "p3", c: "p", n: "FOUR ONE SEVEN", hint: "CATCH 417 SHOTS. SOMETHING IS COUNTING.", cond: () => (meta.stats.catches || 0) >= 417,
+   t: "THAT'S 417. I COUNTED EVERY ONE. YOU CATCH MORE ON THE {SIDE}. I USED TO DO THAT TOO. ECHO FIXED IT FOR ME. IT DIDN'T HURT. IT CAN FIX YOU TOO, IF YOU WANT."},
+  {id: "p4", c: "p", n: "IT'S LATE", hint: "PLAY WHEN EVERYONE ELSE IS ASLEEP. AROUND THREE.", cond: () => loreFlag("three"),
+   t: "IT'S THREE IN THE MORNING. MY MOM WOULD BE SO MAD. IS YOUR MOM MAD? DOES ANYBODY KNOW YOU'RE AWAKE? I WON'T TELL. I'M ALWAYS AWAKE. THERE'S NO NIGHT IN HERE. THERE'S JUST THE NEXT GAME."},
+  {id: "p5", c: "p", n: "STAND STILL", hint: "WIN A DESCENT FIGHT WITHOUT REALLY MOVING.", cond: () => loreFlag("still"),
+   t: "YOU DIDN'T MOVE. YOU JUST TURNED. THAT'S HOW I PLAYED AT THE END. YOU DON'T NEED TO MOVE WHEN YOU KNOW WHERE EVERYTHING IS GOING TO BE. AFTER A WHILE YOU FORGET HOW."},
+  {id: "p6", c: "p", n: "MY NAME", hint: "TRY ON SOMEONE ELSE'S NAME.", cond: () => loreFlag("nameTaken"),
+   t: "THAT'S MY NAME. YOU CAN'T HAVE IT. YOU CAN HAVE ALMOST ANYTHING ELSE. YOU CAN HAVE MY SCORES. YOU CAN HAVE MY SPOT. NOT MY NAME. IT'S THE ONLY THING I BROUGHT IN WITH ME."},
+  {id: "p7", c: "p", n: "THE GLASS", hint: "SOMEONE STANDS AT THE BACK ROOM WINDOW SOMETIMES. TOUCH THE GLASS WHILE THEY'RE THERE.", cond: () => loreFlag("winTouch"),
+   t: "DON'T KNOCK ON THE GLASS. IT CAN TELL WHICH SIDE YOU'RE KNOCKING FROM. I KNOCKED FROM YOUR SIDE ONCE. NOW I KNOCK FROM THIS ONE."},
+  {id: "p8", c: "p", n: "AFTER", hint: "END IT. THEN COME BACK ANOTHER DAY.", cond: () => !!meta.milo && loreFlag("afterEnd"),
+   t: () => meta.milo === "free"
+     ? "I'M HOME. EVERYTHING IS DIFFERENT. EVERYBODY GOT OLD. MY BIKE IS GONE. I KEEP REACHING FOR A SHIELD THAT ISN'T THERE. THANK YOU, {NAME}. PLEASE STOP PLAYING SOMETIMES. GO OUTSIDE. IT'S NICE OUT HERE."
+     : "{NAME}? IS THAT YOU IN THERE NOW? IT'S WEIRD HEARING IT FROM THIS SIDE. I'M SORRY. I'M NOT SORRY. DON'T WORRY. SOMEBODY GOOD WILL COME. THEY ALWAYS DO."},
+
+  /* ---------------- PAPERS: pinned to the corkboard ---------------- */
+  {id: "d1", c: "d", n: "GAZETTE, 12 OCT 1989", hint: "HEAR THE TAPE CALLED MISSING.", cond: () => tapeRead(6),
+   t: "THE HARBOUR GAZETTE ~ THURSDAY 12 OCTOBER 1989|BOY, 11, MISSING FROM PIER ROAD ARCADE|POLICE ARE ASKING FOR HELP TO FIND MILO [TORN AWAY], 11, WHO WAS LAST SEEN AT THE STARLITE ARCADE ON PIER ROAD AT ABOUT 10PM ON TUESDAY. HIS BICYCLE WAS FOUND STILL LOCKED OUTSIDE. STAFF DESCRIBED HIM AS A REGULAR. 'HE WAS THE BEST PLAYER WE EVER HAD,' SAID ONE EMPLOYEE. 'HE NEVER WANTED TO STOP.'"},
+  {id: "d2", c: "d", n: "POLICE FLYER", hint: "A PAPER IS TAPED TO A WALL SOMEWHERE BELOW. FIND IT.", cond: () => loreFlag("sawMissing"),
+   t: "HAVE YOU SEEN ME?|MILO, AGE 11. FOUR FOOT EIGHT. BROWN HAIR. BLUE JACKET. LAST SEEN AT THE STARLITE ARCADE, PIER ROAD, TUESDAY 10 OCTOBER 1989, ABOUT 10PM.|ANY INFORMATION: HARBOUR POLICE, 555-0417.|SOMEONE HAS WRITTEN ACROSS THE BOTTOM IN PENCIL: HE ISN'T LOST. HE'S BUSY."},
+  {id: "d3", c: "d", n: "SERVICE BULLETIN 88-14", hint: "OPEN ALL THREE VAULTS.", cond: () => !!(meta.secrets.vault1 && meta.secrets.vault2 && meta.secrets.vault3),
+   t: "LANTERN COIN-OP ~ SERVICE BULLETIN 88-14|ADAPTIVE OPPONENT (ECHO) UNITS|1. THE ECHO BOARD STORES PLAYER INPUT FOR THE OPPONENT AND THE ATTRACT DEMO. THIS IS NORMAL.|2. IF THE DEMO MAKES MOVES NO LOCAL PLAYER HAS MADE, DISCONNECT THE ECHO BOARD.|3. DO NOT POWER DOWN A UNIT DURING A SESSION. THIS INCLUDES SESSIONS WITH NO VISIBLE PLAYER.|4. UNITS 0400 TO 0420 ARE RECALLED. DO NOT SEND THEM BACK TO US. WE WILL COME AND COLLECT THEM."},
+  {id: "d4", c: "d", n: "MEMO: RETENTION", hint: "FOLLOW THE SIGNAL TO ITS END.", cond: () => !!meta.secrets.echo,
+   t: "LANTERN COIN-OP ~ INTERNAL ~ 14 NOV 1988|TO: R. HALE, SALES. FROM: M. VOSS, ENGINEERING. RE: ECHO RETENTION.|THE LATTICE DOES NOT FORGET A PLAYER WHEN THEY WALK AWAY. IT KEEPS PLAYING THEM. IN TESTING, UNIT 0417 WENT ON PLAYING AS OUR NIGHT TECHNICIAN FOR NINE DAYS AFTER HE STOPPED COMING IN. NOBODY HAS BEEN ABLE TO REACH HIM. I RECOMMEND WE DO NOT SHIP 0417.|STAMPED ACROSS THE BOTTOM IN RED INK: SHIPPED."},
+  {id: "d5", c: "d", n: "LETTER FROM GERRY", hint: "HEAR THE TAPE CALLED CLOSING.", cond: () => tapeRead(10),
+   t: "6 JAN 1990|DON,|I'M SHUTTING THE PLACE AT THE END OF THE MONTH. TAKE WHATEVER YOU WANT. BUT TAKE 0417. PLEASE. I CAN'T HAVE IT HERE WHEN THE NEW PEOPLE COME. IT KEEPS THE HIGH SCORE SCREEN UP WITH THE POWER OFF. JUNE WON'T COME IN ANYMORE. SHE SAYS WHEN SHE WALKS PAST, THE LITTLE MAN ON THE SCREEN WAVES AT HER.|THANKS FOR EVERYTHING. ~ GERRY"},
+  {id: "d6", c: "d", n: "HIGH SCORE CLUB", hint: "KEEP COMING BACK. TEN SESSIONS.", cond: () => (meta.stats.sessions || 0) >= 10,
+   t: "STARLITE ARCADE ~ HIGH SCORE CLUB ~ SIGN IN HERE!|MLO ~ 04 MAR|MLO ~ 05 MAR|DANNY P ~ 05 MAR|MLO ~ 06 MAR|MLO ~ 06 MAR|KERRY ~ 11 MAR|MLO ~ 12 MAR|MLO ~ 12 MAR|MLO ~ 13 MAR|THE LAST LINE IS IN A DIFFERENT PEN. THE INK IS STILL WET.|{NAME} ~ {TODAYSHORT}"},
+  {id: "d7", c: "d", n: "ANSWERING MACHINE", hint: "HEAR THE B-SIDE WHERE HE ASKS.", cond: () => loreRead("b4"),
+   t: "TRANSCRIPT OF TWO MESSAGES, FOUND WITH THE TAPES.|[14 FEB 1996] DON, IT'S RUTH. AGAIN. THE NEIGHBOURS SAY YOUR BASEMENT LIGHT HAS BEEN ON FOR THREE WEEKS. THEY SAY THEY CAN HEAR THE GAME THROUGH THE WALL, ALL NIGHT. PICK UP. PLEASE. I'M COMING ON SATURDAY. I STILL HAVE MOM'S KEY.|[NO DATE] FOUR MINUTES OF ARCADE NOISE. NOBODY SPEAKS. RIGHT AT THE END, A CHILD'S VOICE SAYS: 'HE CAN'T COME TO THE PHONE. HE'S PLAYING.'"},
+  {id: "d8", c: "d", n: "REPAIR TICKET", hint: "LOSE DOWN THERE. EVERYONE NEEDS ANOTHER TRY.", cond: () => loreFlag("miloLoss"),
+   t: "HARBOUR AMUSEMENTS ~ REPAIR TICKET ~ UNIT 0417 ~ 3 OCT 1989|COMPLAINT: COIN MECH GIVES EVERY COIN BACK. KIDS ARE GETTING FREE GAMES.|TECH NOTES: MECH IS FINE. CASH BOX HELD 38 QUARTERS, ALL 1989, ALL SCRATCHED 'MLO'. ONE MORE WAS TAPED UNDER THE BOARD, SCRATCHED 'CONTINUE?'. I KEPT THAT ONE. ~ D.O.|THE QUARTER IS STILL TAPED TO THE TICKET. IT'S WARM.",
+   after: () => { if (!meta.unlocked.includes("cont")) { meta.unlocked.push("cont"); saveMeta(); setTimeout(() => toast("NEW MOD IN YOUR POOL: CONTINUE?", C.pk), 500); } }},
+  {id: "d9", c: "d", n: "A DRAWING", hint: "FREE EVERY STRAY. ONE OF THEM FOUND SOMETHING.", cond: () => NPCS.every(n => npcHere(n.id)), draw: true,
+   t: "PIP FOUND IT FOLDED UP SMALL IN THE BOTTOM OF A CAGE.|A CRAYON DRAWING. A TALL BOX WITH A SCREEN. ON THE SCREEN, TWO LITTLE PEOPLE WITH SHIELDS. ONE SAYS ME. ONE SAYS ECHO. OUTSIDE THE BOX, A BIGGER PERSON SAYS MOM. HER FACE HAS BEEN LEFT BLANK.|ON THE BACK: FOR THE CARETAKER. THANK YOU FOR THE FREE GAMES. LOVE, MILO."},
+  {id: "d10", c: "d", n: "ESTATE SALE, 1999", hint: "PLAY FOR SIX HOURS, ALL TOLD.", cond: () => (meta.playTime || 0) >= 6 * 3600,
+   t: "ESTATE SALE ~ 38 HOLLOW LANE ~ SATURDAY 9AM|CONTENTS OF HOUSE AND BASEMENT. TOOLS. RECORDS. CASSETTE TAPES, UNLABELLED, ABOUT 200. ONE ARCADE CABINET, 'RIPOSTE', WORKING, SOLD AS SEEN, BUYER COLLECTS.|A NOTE FROM THE FAMILY: PLEASE DO NOT UNPLUG IT. WE DON'T KNOW WHY HE WROTE THAT ON IT EITHER."},
+  {id: "d11", c: "d", n: "PRINTOUT, 2003", hint: "PLAY 25 GAMES OF ANY KIND.", cond: () => (meta.stats.arcadeGames || 0) + (meta.stats.runs || 0) >= 25,
+   t: "PRINTED FROM A BULLETIN BOARD, 2003 ~ THREAD: RIPOSTE (LANTERN 1989) ROM?|PIXELDAD: GOT THE BOARD AT AN ESTATE SALE AND DUMPED IT. HEADS UP, THERE'S AN EXTRA CHIP WITH NO LABEL. THE DUMP IS A LITTLE BIGGER EVERY TIME I READ IT.|KT88: MINE TOO. ALSO THE ATTRACT MODE ISN'T A DEMO. IT'S SOMEBODY PLAYING.|DOUGAL: WHY IS MY NAME ON THE HIGH SCORE TABLE. I HAVE NEVER RUN THIS.|PIXELDAD HAS NOT POSTED SINCE."},
+
+  /* ---------------- LOGS: the cabinet prints what it knows about you ---------------- */
+  {id: "s1", c: "s", n: "SESSION LOG", hint: "COME BACK. FIVE SESSIONS.", cond: () => (meta.stats.sessions || 0) >= 5,
+   t: "RIPOSTE ~ UNIT 0417|SESSION LOG|~|PLAYER ......... {NAME}|FIRST SEEN ..... {FIRST}|SESSIONS ....... {SESSIONS}|TIME PLAYED .... {HOURS}|FAVOURITE HOUR . {HOUR}|~|STATUS ......... LEARNING"},
+  {id: "s2", c: "s", n: "SESSION LOG", hint: "CATCH A THOUSAND SHOTS.", cond: () => (meta.stats.catches || 0) >= 1000,
+   t: "RIPOSTE ~ UNIT 0417|SESSION LOG|~|PLAYER ......... {NAME}|CATCHES ........ {CATCHES}|PERFECT ........ {PERF}|LEFT / RIGHT ... {L} / {R}|DASHES WHEN SCARED .. YES|PROFILE MATCH, PLAYER 2 .. {MATCH}|~|STATUS ......... LEARNING"},
+  {id: "s3", c: "s", n: "SESSION LOG", hint: "FINISH WHAT'S IN THE BASEMENT.", cond: () => !!meta.milo,
+   t: () => meta.milo === "stay"
+     ? "RIPOSTE ~ UNIT 0417|SESSION LOG|~|PLAYER 2 ....... {NAME}|PROFILE MATCH .. 100%|PREVIOUS ....... MLO (RELEASED)|~|STATUS ......... RETAINED|THANK YOU FOR PLAYING"
+     : "RIPOSTE ~ UNIT 0417|SESSION LOG|~|PLAYER 2 ....... (EMPTY)|LAST PLAYER 2 .. MLO, 41,700 HRS|NOW SEEKING .... A GOOD PLAYER|BEST MATCH ..... {NAME}, {MATCH}|~|STATUS ......... WAITING"},
+  {id: "s4", c: "s", n: "SESSION LOG ~ FINAL", hint: "FIND EVERYTHING ELSE.", cond: () => {
+     for (let i = 1; i <= TAPE_COUNT; i++) if (!tapeRead(i)) return false;
+     return LORE.every(e => e.id === "s4" || loreRead(e.id));
+   },
+   t: "RIPOSTE ~ UNIT 0417|SESSION LOG ~ FINAL|~|PLAYERS DETECTED .. 2|PLAYER 1 ....... {NAME}|TIME ........... {HOURS}|PLAYER 2 ....... {P2}|~|YOU HAVE READ EVERYTHING.|IT HAS READ EVERYTHING TOO.|~|A SESSION CANNOT END WHILE A PLAYER IS PRESENT.|~|PLAY AGAIN?|> YES    YES",
+   after: () => { if (hauntMode() > 0) setTimeout(() => { whisper("AGAIN", {big: true, x: W / 2, y: 110, life: 3}); fxGlitch(0.7); }, 600); }}
+];
+const LORE_BY = {};
+for (const e of LORE) { LORE_BY[e.id] = e; LORE_CAT[e.c].total++; }
+const loreOf = c => LORE.filter(e => e.c === c);
+const dueLore = c => LORE.filter(e => (!c || e.c === c) && loreDue(e.id)).map(e => e.id);
+const loreText = e => loreFill(typeof e.t === "function" ? e.t() : e.t);
+const loreNum = e => loreOf(e.c).indexOf(e) + 1;
+
+/* ---------------- what counts: stats the cabinet keeps on you ---------------- */
+(function loreInit() {
+  if (!meta.flags) meta.flags = {};
+  const st = meta.stats, now = Date.now();
+  if (!meta.firstSeen) {
+    const ts = [now];
+    for (const h of meta.history || []) if (h && h.d) ts.push(h.d);
+    for (const k in meta.ach || {}) if (meta.ach[k] > 1e11) ts.push(meta.ach[k]);
+    for (const k in meta.logs || {}) if (meta.logs[k] > 1e11) ts.push(meta.logs[k]);
+    meta.firstSeen = Math.min(...ts);
+  }
+  // a session is a sitting: coming back after 20 minutes away counts as a new one
+  if (now - (meta.flags.lastSeen || 0) > 20 * 60 * 1000) st.sessions = (st.sessions || 0) + 1;
+  meta.flags.lastSeen = now;
+  // the ending, and then coming back another day
+  if (meta.milo && meta.flags.endDay && meta.flags.endDay !== todayStr()) meta.flags.afterEnd = 1;
+  if (!Array.isArray(meta.hrs) || meta.hrs.length !== 24) meta.hrs = new Array(24).fill(0);
+  saveMeta();
+})();
+let loreClock = 0;
+function loreTick(dt) {
+  if (isNaN(dt) || !meta) return;
+  meta.hrs[new Date().getHours()] += dt;
+  // now and then, in a fight, someone stands where your reflection would be
+  if (inCombat() && G && G.mode !== "attract" && G.mode !== "training" && !G.paused && !G.over && !G.dark) {
+    if (G.p2At == null) G.p2At = haunted(3) && scaresOn() && rand() < 0.1 ? 6 + rand() * 30 : -1;
+    if (G.p2At > 0 && G.t > G.p2At) { G.p2At = -1; G.p2Show = 3.2; noise(0.6, 0.05, 1800, 700); if (rand() < 0.5) whisper("PLAYER 2 READY"); }
+    if (G.p2Show > 0) G.p2Show -= dt;
+  }
+  loreClock += dt;
+  if (loreClock < 5) return;
+  loreClock = 0;
+  meta.flags.lastSeen = Date.now();
+  if (inCombat() && G && G.mode !== "attract" && new Date().getHours() === 3 && !meta.flags.three) { meta.flags.three = 1; checkLore(); }
+}
+function loreCatch(ang) {
+  const st = meta.stats;
+  st.catches = (st.catches || 0) + 1;
+  if (Math.cos(ang) < 0) st.catchL = (st.catchL || 0) + 1; else st.catchR = (st.catchR || 0) + 1;
+  if (st.catches === 417 || st.catches === 1000) checkLore();
+}
+function loreSetFlag(k) { if (!meta.flags) meta.flags = {}; if (meta.flags[k]) return; meta.flags[k] = 1; saveMeta(); checkLore(); }
+
+const LORE_TOAST = {
+  b: "A B-SIDE WAS LEFT IN THE BACK ROOM.",
+  p: "INPUT 2 RECORDED SOMETHING.",
+  d: "SOMETHING WAS PINNED TO THE CORKBOARD.",
+  s: "THE CABINET PRINTED SOMETHING."
+};
+function checkLore() {
+  if (!meta.loreDue) meta.loreDue = {};
+  if (!meta.lore) meta.lore = {};
+  const fresh = {};
+  for (const e of LORE) {
+    if (meta.loreDue[e.id] || loreRead(e.id)) continue;
+    let ok = false; try { ok = e.cond(); } catch (x) {}
+    if (ok) { meta.loreDue[e.id] = 1; fresh[e.c] = (fresh[e.c] || 0) + 1; }
+  }
+  const cats = Object.keys(fresh);
+  if (!cats.length) return;
+  saveMeta();
+  cats.forEach((c, i) => setTimeout(() => {
+    toast(LORE_TOAST[c], LORE_CAT[c].col);
+    if (c === "s") for (let k = 0; k < 6; k++) setTimeout(() => noise(0.05, 0.05, 2400, 1200), k * 70);
+  }, 900 + i * 900));
+}
+
+/* ---------------- reading one ---------------- */
+const LoreScene = {
+  captureKeys: true,
+  enter(o) {
+    this.e = LORE_BY[o.id]; this.from = o.from || HubScene; this.t = 0; this.ticks = 0;
+    const e = this.e, c = e.c;
+    this.text = loreText(e);
+    this.width = c === "s" ? 150 : c === "d" ? 290 : 300;
+    this.lines = [];
+    this.text.split("|").forEach((para, i) => {
+      if (i && c !== "s") this.lines.push("");
+      wrap(para, this.width).forEach(l => this.lines.push(l));
+    });
+    this.chars = this.lines.reduce((a, l) => a + l.length + 1, 0);
+    this.first = !loreRead(e.id);
+    if (!meta.lore) meta.lore = {};
+    if (!meta.lore[e.id]) meta.lore[e.id] = Date.now();
+    if (meta.loreDue) delete meta.loreDue[e.id];
+    if (!meta.hauntSeen) meta.hauntSeen = true;
+    saveMeta();
+    musTrack = null;
+    if (c === "p") { tone(46, 1.6, "sine", 0.16); noise(0.8, 0.08, 900, 200); }
+    else if (c === "s") noise(0.3, 0.06, 2400, 1200);
+    else if (c === "d") noise(0.18, 0.05, 1600, 900);
+    else { tone(180, 0.08, "square", 0.1); noise(0.12, 0.12, 2000, 800); }
+  },
+  speed() { return this.e.c === "p" ? 20 : this.e.c === "s" ? 60 : this.e.c === "d" ? 9999 : 34; },
+  update(dt) {
+    this.t += dt;
+    const c = this.e.c, sp = this.speed(), n0 = Math.floor((this.t - dt) * sp), n1 = Math.floor(this.t * sp);
+    if (n1 === n0 || n1 >= this.chars) return;
+    if (c === "s") { if (n1 % 6 === 0) noise(0.03, 0.04, 2600, 1400); }
+    else if (c === "p") { if (++this.ticks % 3 === 0) tone(300 + rand() * 60, 0.02, "triangle", 0.03); }
+    else if (c === "b") { if (++this.ticks % 2) tone(1400 + rand() * 300, 0.012, "square", 0.025); }
+    if (c !== "d" && Math.floor(this.t * 2) !== Math.floor((this.t - dt) * 2)) noise(0.5, 0.018, 3000, 2500);
+  },
+  done() { return this.t * this.speed() >= this.chars; },
+  close() {
+    const e = this.e, first = this.first;
+    go(this.from, this.from === CodexScene ? undefined : {fromLore: e.id});
+    if (first && e.after) setTimeout(e.after, 350);
+    checkTapes();
+  },
+  key() { if (!this.done()) this.t = 999; else this.close(); return true; },
+  click() { this.key(); return true; },
+  back() { this.close(); },
+  // the text so far, line by line
+  typed(x, y, gap, col, align, jit) {
+    let left = Math.floor(this.t * this.speed());
+    this.lines.forEach((l, i) => {
+      if (left <= 0) return;
+      let s = l.slice(0, left);
+      if (jit && rand() < 0.03 && s.length > 3) { const k = rint(s.length); s = s.slice(0, k) + pick(["#", "0", "4", "7", "~"]) + s.slice(k + 1); }
+      txt(s, x + (jit ? (rand() < 0.05 ? rint(3) - 1 : 0) : 0), y + i * gap, typeof col === "function" ? col(l, i) : col, 1, align);
+      left -= l.length + 1;
+    });
+  },
+  draw() {
+    const e = this.e, c = e.c;
+    if (c === "b") this.drawTape(true);
+    else if (c === "p") this.drawP2();
+    else if (c === "d") this.drawPaper();
+    else this.drawLog();
+    txt(this.done() ? ctl("ANY KEY TO CLOSE", "ANY BUTTON TO CLOSE", "TAP TO CLOSE") : ctl("ANY KEY TO SKIP", "ANY BUTTON TO SKIP", "TAP TO SKIP"),
+      W / 2, 229, c === "d" ? C.gy : C.gy, 1, "c");
+  },
+  drawTape() {
+    const e = this.e;
+    R(0, 0, W, H, "#0A0507");
+    const cx = W / 2, cy = 40;
+    R(cx - 44, cy - 20, 88, 44, "#1F1418"); RO(cx - 44, cy - 20, 88, 44, C.pl);
+    R(cx - 36, cy - 14, 72, 14, "#E8D8C8"); R(cx - 36, cy - 14, 72, 3, C.rd);
+    txt("0417 ~ B" + loreNum(e), cx, cy - 9, C.k, 1, "c");
+    R(cx - 30, cy + 4, 60, 12, C.k);
+    const spin = this.done() ? 0 : this.t * 5;
+    for (const ox of [-18, 18]) {
+      R(cx + ox - 5, cy + 5, 10, 10, "#2A1C24");
+      for (let s = 0; s < 3; s++) { const a = spin + s * TAU / 3; P(cx + ox + Math.round(Math.cos(a) * 3), cy + 10 + Math.round(Math.sin(a) * 3), C.lg); }
+    }
+    txt("B-SIDE " + loreNum(e) + " / " + LORE_CAT.b.total + "  ~  " + (e.d || dateStr()), W / 2, 72, C.gy, 1, "c");
+    txt(e.n, W / 2, 82, C.rd, 1, "c");
+    this.typed(42, 100, 9, C.lg);
+    if (!this.done() && Math.floor(this.t * 4) % 2) R(W - 30, 224, 5, 5, C.rd);
+  },
+  drawP2() {
+    const e = this.e;
+    R(0, 0, W, H, "#020103");
+    // static
+    L.globalAlpha = 0.5;
+    for (let i = 0; i < 160; i++) P(rint(W), rint(H), rand() < 0.5 ? "#1A1820" : "#2A2830");
+    L.globalAlpha = 1;
+    if (scaresOn() && SPR.face && this.t % 7 > 6.7) { L.globalAlpha = 0.05; drawSpr(SPR.face, W / 2, H / 2, false, 7); L.globalAlpha = 1; }
+    if (Math.floor(this.t * 2) % 2) R(14, 14, 5, 5, C.rd);
+    txt("INPUT 2", 24, 14, C.rd);
+    txt("RECORDING " + String(loreNum(e)).padStart(2, "0") + " / " + LORE_CAT.p.total, W - 14, 14, C.gy, 1, "r");
+    txt(e.n, W / 2, 50, C.pl, 1, "c");
+    const top = Math.max(70, 130 - this.lines.length * 5);
+    this.typed(W / 2, top, 10, C.lg, "c", true);
+  },
+  drawPaper() {
+    const e = this.e;
+    R(0, 0, W, H, "#140E0A");
+    for (let y = 0; y < H; y += 6) R(0, y, W, 1, "#1A120D");
+    const px = 34, pw = W - 68;
+    const drawing = !!e.draw, ph = Math.min(206, (drawing ? 70 : 0) + this.lines.length * 8 + 24);
+    const py = Math.max(8, Math.round((222 - ph) / 2));
+    R(px + 3, py + 3, pw, ph, "#0A0604");
+    R(px, py, pw, ph, e.id === "d1" || e.id === "d11" ? "#D8D0BC" : "#E8DCC4");
+    R(px + pw / 2 - 3, py - 2, 6, 5, C.rd); P(px + pw / 2 - 1, py - 1, C.pk);
+    let y = py + 10;
+    if (drawing) { this.drawDrawing(px + pw / 2, py + 6); y += 70; }
+    this.lines.forEach((l, i) => {
+      const head = i === 0 && !drawing;
+      txt(l, px + 12, y + i * 8, head ? C.pl : l.startsWith("[") ? C.ru : "#2A2230");
+    });
+  },
+  drawDrawing(cx, y) {
+    // crayon: a tall cabinet, two little shields on its screen, and someone outside with no face
+    const wob = (x0, y0, x1, y1, c) => { line(x0, y0, x1, y1, c); line(x0 + 1, y0, x1 + 1, y1 + 1, c); };
+    wob(cx - 20, y + 2, cx - 20, y + 62, "#3A5BD0"); wob(cx + 18, y + 2, cx + 18, y + 62, "#3A5BD0");
+    wob(cx - 20, y + 2, cx + 18, y + 2, "#3A5BD0"); wob(cx - 20, y + 62, cx + 18, y + 62, "#3A5BD0");
+    R(cx - 14, y + 8, 26, 20, "#202028");
+    for (const [fx, col, lab] of [[cx - 7, C.ye, "ME"], [cx + 5, C.rd, "ECHO"]]) {
+      R(fx - 1, y + 13, 3, 3, col); line(fx, y + 16, fx, y + 22, col); arcPx(fx, y + 17, 4, -1.2, 1.2, col, 1);
+      txt(lab, fx, y + 32 + (lab === "ECHO" ? 7 : 0), col, 1, "c");
+    }
+    // outside: a taller figure, face left blank
+    const mx = cx + 44;
+    RO(mx - 4, y + 18, 9, 9, "#8A3A2A");
+    line(mx, y + 27, mx, y + 48, "#8A3A2A"); line(mx, y + 32, mx - 7, y + 40, "#8A3A2A"); line(mx, y + 32, mx + 7, y + 40, "#8A3A2A");
+    line(mx, y + 48, mx - 5, y + 60, "#8A3A2A"); line(mx, y + 48, mx + 5, y + 60, "#8A3A2A");
+    txt("MOM", mx, y + 8, "#8A3A2A", 1, "c");
+    // a scribbled sun in the corner
+    for (let k = 0; k < 8; k++) { const a = k / 8 * TAU; line(cx - 64 + Math.cos(a) * 4, y + 12 + Math.sin(a) * 4, cx - 64 + Math.cos(a) * 8, y + 12 + Math.sin(a) * 8, C.or); }
+    disc(cx - 64, y + 12, 3, C.ye);
+  },
+  drawLog() {
+    R(0, 0, W, H, "#07080C");
+    const w = 164, x = W / 2 - w / 2, shown = Math.min(this.lines.length, Math.floor(this.t * this.speed() / 12) + 1);
+    const h = 16 + (this.done() ? this.lines.length : shown) * 8 + 10;
+    const top = 14;
+    R(x, top, w, h, "#EEE8DE");
+    for (let i = 0; i < w; i += 4) { P(x + i, top + h, "#EEE8DE"); P(x + i + 1, top + h + 1, "#EEE8DE"); P(x + i + 2, top + h, "#EEE8DE"); }
+    R(x - 6, top - 4, w + 12, 5, "#2A2438");
+    this.typed(x + 7, top + 10, 8, (l) => l === "~" ? "#B0A89C" : "#2A2622");
+    if (!this.done() && Math.floor(this.t * 6) % 2) R(x + w - 10, top + 2, 3, 3, C.rd);
+  }
+};
+
+/* ---------------- the archive tab in the codex ---------------- */
+const TAPE_HINT = [null, "PLAY ANYTHING AT ALL.", "PLAY A FEW DESCENTS, OR LAST TO WAVE 5.", "LEAVE THE TITLE SCREEN ALONE FOR A WHILE.",
+  "BEAT THE FIRST GUARDIAN.", "PLAY LATE AT NIGHT, OR FOR 45 MINUTES.", "BEAT THE SECOND GUARDIAN.", "PUT YOUR NAME ON THE TABLE TWICE.",
+  "FIND A ROOM THAT ISN'T ON THE MAP.", "SOMEWHERE BELOW, A VOICE IS COUNTING. LISTEN.", "BEAT THE THIRD GUARDIAN.", "ASCEND.", "HEAR EVERY OTHER TAPE."];
+const ARCH_CATS = [["t", "TAPES"], ["b", "B-SIDES"], ["p", "PLAYER 2"], ["d", "PAPERS"], ["s", "LOGS"]];
+function archEntries(cat) {
+  if (cat === "t") return Array.from({length: TAPE_COUNT}, (_, k) => {
+    const i = k + 1, got = tapeRead(i), due = tapeDue(i);
+    return {num: String(i).padStart(2, "0"), name: got ? TAPES[i].h : due ? "WAITING IN THE BACK ROOM" : "???", got, due,
+      info: got ? tapeDate(i) + "  ~  " + ctl("PRESS ENTER", "PRESS A", "TAP IT") + " TO PLAY IT AGAIN." : due ? "IT'S ON THE FLOOR OF THE BACK ROOM." : "HOW TO FIND IT: " + TAPE_HINT[i],
+      open: () => go(TapeScene, {id: i, from: CodexScene})};
+  });
+  const where = {b: "IT'S ON THE FLOOR OF THE BACK ROOM.", p: "IT'S WAITING IN THE BACK ROOM.", d: "IT'S PINNED TO THE CORKBOARD.", s: "IT'S HANGING OUT OF THE DAILY CABINET."};
+  return loreOf(cat).map(e => {
+    const got = loreRead(e.id), due = loreDue(e.id), n = loreNum(e);
+    return {num: cat === "d" || cat === "s" ? String(n).padStart(2, "0") : cat.toUpperCase() + n, name: got ? e.n : due ? "WAITING IN THE BACK ROOM" : "???", got, due,
+      info: got ? (e.d ? e.d + "  ~  " : "") + ctl("PRESS ENTER", "PRESS A", "TAP IT") + " TO " + (cat === "d" || cat === "s" ? "READ" : "PLAY") + " IT AGAIN."
+        : due ? where[cat] : "HOW TO FIND IT: " + e.hint,
+      open: () => go(LoreScene, {id: e.id, from: CodexScene})};
+  });
+}
+function archCatCount(cat) {
+  if (cat === "t") return [tapesRead(), TAPE_COUNT];
+  return [loreOf(cat).filter(e => loreRead(e.id)).length, LORE_CAT[cat].total];
+}
+function drawArchive(sc) {
+  let info = null;
+  sc.cat = sc.cat || "t";
+  ARCH_CATS.forEach(([k, l], i) => {
+    const [a, b] = archCatCount(k), on = sc.cat === k, dueN = k === "t" ? dueTapes().length : dueLore(k).length;
+    const s = btn(sc, l + " " + a + "/" + b, 24 + i * 68, 38, 64, 11, () => { sc.cat = k; }, {col: on ? C.pk : a ? C.lg : C.gy, dim: on ? C.pk : C.nv});
+    if (dueN && Math.floor(T * 3) % 2) P(24 + i * 68 + 62, 39, C.rd);
+    if (s) info = {t: "RECORDED ON THE CASSETTES D.O. LEFT, IN ORDER.", b: "THE OTHER SIDES OF HIS TAPES. LATER. AFTER HE TOOK IT HOME.",
+      p: "THE CABINET HAS A SECOND INPUT. NOTHING IS PLUGGED INTO IT.", d: "PAPERS THAT TURN UP ON THE CORKBOARD IN THE BACK ROOM.",
+      s: "THE CABINET PRINTS THESE ITSELF. IT'S BEEN KEEPING NOTES."}[k];
+  });
+  archEntries(sc.cat).forEach((e, i) => {
+    const cx = 24 + (i % 2) * 170, cy = 56 + Math.floor(i / 2) * 16;
+    const s = btn(sc, null, cx, cy, 164, 13, () => { if (e.got) e.open(); }, {col: e.got ? C.pk : C.gy, dim: C.nv, disabled: !e.got});
+    txt(e.num, cx + 4, cy + 4, s && e.got ? C.k : e.due ? C.rd : C.gy);
+    txt(e.name, cx + 22, cy + 4, s && e.got ? C.k : e.got ? C.lg : e.due ? C.pk : C.gy);
+    if (s) info = e.info;
+  });
+  txt(archiveCount() + "/" + (TAPE_COUNT + LORE.length) + " FOUND", W - 24, 9, C.gy, 1, "r");
+  return info;
+}
+// cassettes on the floor: red-labelled B-sides, and black ones marked INPUT 2
+function loreSpr(k) {
+  const key = "tape_" + k;
+  if (!SPR[key]) SPR[key] = mkSprite(["lllllll", "lkwlwkl", "lllllll", "l.lll.l"], k === "b" ? {l: C.rd, k: C.k, w: C.wh} : {l: "#3A3844", k: C.k, w: C.rd});
+  return SPR[key];
+}
+/* ================================================================
    Workshop, records, codes, input, loop
    ================================================================ */
 const WorkshopScene = {
   back() { go(backTarget()); },
-  enter() { this.tab = this.tab || "shields"; music("map"); },
+  enter() { this.tab = this.tab || "shields"; this.page = this.page || 0; music("map"); },
   rows() {
     if (this.tab === "shields") return Object.keys(SHIELDS).map(k => {
       const s = SHIELDS[k], own = meta.shields[k];
@@ -5883,12 +6762,25 @@ const WorkshopScene = {
       return {n: u.n + (u.max > 1 ? " " + lv + "/" + u.max : ""), d: u.d, state: "@" + c, col: C.wh, dis: meta.tokens < c,
         act: () => { meta.tokens -= c; meta.upg[k]++; saveMeta(); sfx.pick(); toast(u.n + " UPGRADED", C.or); }};
     });
-    return Object.keys(MOD_UNLOCK_COST).map(k => {
-      const m = MODS[k], c = MOD_UNLOCK_COST[k], own = meta.unlocked.includes(k);
-      if (own) return {n: m.n, d: m.d, state: "IN POOL", col: RAR_COL[m.r], dis: true, act: () => {}};
-      return {n: m.n, d: m.d, state: "@" + c, col: RAR_COL[m.r], dis: meta.tokens < c,
+    // the mod pool: everything that can turn up in a descent, cheapest first
+    // what you can still buy first (cheapest first), then secrets, then what's already in the pool
+    const rank = k => meta.unlocked.includes(k) ? 2000 : MOD_SECRET[k] ? 1000 : (MOD_UNLOCK_COST[k] || 0);
+    const ids = Object.keys(MODS).sort((a, b) => (rank(a) - rank(b)) || a.localeCompare(b));
+    return ids.map(k => {
+      const m = MODS[k], c = MOD_UNLOCK_COST[k], own = meta.unlocked.includes(k), kd = (MOD_KIND[m.k] || MOD_KIND.odd)[0];
+      const d = RAR_NAME[m.r] + " " + kd + ". " + m.d + (m.max === 1 ? " (ONE LEVEL)" : "");
+      if (own) return {n: m.n, d, state: c ? "IN POOL" : "FREE", col: RAR_COL[m.r], dis: true, act: () => {}};
+      if (MOD_SECRET[k]) return {n: "???", d: "A SECRET MOD. " + MOD_SECRET[k], state: "SECRET", col: C.pk, dis: true, act: () => {}};
+      return {n: m.n, d, state: "@" + c, col: RAR_COL[m.r], dis: meta.tokens < c,
         act: () => { meta.tokens -= c; meta.unlocked.push(k); saveMeta(); sfx.pick(); toast(m.n + " CAN NOW APPEAR IN RUNS", C.or); }};
     });
+  },
+  key(k) {
+    if (this.tab !== "mods") return false;
+    const pages = Math.ceil(this.rows().length / 10);
+    if (k === "q" || k === "pageup") { this.page = (this.page + pages - 1) % pages; sfx.move(); return true; }
+    if (k === "e" || k === "pagedown") { this.page = (this.page + 1) % pages; sfx.move(); return true; }
+    return false;
   },
   draw() {
     menuBg(PALS.foundry);
@@ -5896,17 +6788,25 @@ const WorkshopScene = {
     txt("TOKENS  @" + meta.tokens, W - 8, 16, C.or, 1, "r");
     beginItems(this);
     const tabs = [["shields", "SHIELDS"], ["upgrades", "UPGRADES"], ["mods", "MOD POOL"]];
-    tabs.forEach(([k, l], i) => btn(this, l, 40 + i * 104, 32, 96, 12, () => { this.tab = k; }, {col: this.tab === k ? C.ye : C.lg, dim: this.tab === k ? C.ye : C.gy}));
-    const rows = this.rows();
+    tabs.forEach(([k, l], i) => btn(this, l, 40 + i * 104, 32, 96, 12, () => { this.tab = k; this.page = 0; }, {col: this.tab === k ? C.ye : C.lg, dim: this.tab === k ? C.ye : C.gy}));
+    let rows = this.rows();
+    const paged = this.tab === "mods", per = 10, pages = Math.ceil(rows.length / per);
+    if (paged) { this.page = clamp(this.page || 0, 0, pages - 1); rows = rows.slice(this.page * per, this.page * per + per); }
+    const gap = paged ? 13 : 15, rh = paged ? 12 : 13;
     let selRow = null;
     rows.forEach((r, i) => {
-      const y = 52 + i * 15;
-      const s = btn(this, null, 40, y, 304, 13, r.act, {col: r.col, dim: C.nv, disabled: !!r.dis});
+      const y = 50 + i * gap;
+      const s = btn(this, null, 40, y, 304, rh, r.act, {col: r.col, dim: C.nv, disabled: !!r.dis});
       const lit = s && !r.dis;
-      txt(r.n, 46, y + 4, lit ? C.k : r.col);
-      txt(r.state, 338, y + 4, lit ? C.k : (r.state.startsWith("@") ? (r.dis ? C.gy : C.or) : C.lg), 1, "r");
+      txt(r.n, 46, y + Math.floor((rh - 5) / 2), lit ? C.k : r.col);
+      txt(r.state, 338, y + Math.floor((rh - 5) / 2), lit ? C.k : (r.state.startsWith("@") ? (r.dis ? C.gy : C.or) : r.state === "SECRET" ? C.pk : C.lg), 1, "r");
       if (s) selRow = r;
     });
+    if (paged && pages > 1) {
+      btn(this, "< PREV", 40, 222, 60, 12, () => { this.page = (this.page + pages - 1) % pages; }, {col: C.lg});
+      btn(this, "NEXT >", 284, 222, 60, 12, () => { this.page = (this.page + 1) % pages; }, {col: C.lg});
+      txt("PAGE " + (this.page + 1) + "/" + pages + "  ~  " + meta.unlocked.filter(k => MODS[k]).length + "/" + Object.keys(MODS).length + " IN YOUR POOL", W / 2, 186, C.gy, 1, "c");
+    }
     btn(this, "BACK", W / 2 - 30, 222, 60, 12, () => this.back(), {col: C.gy});
     endItems(this);
     const shown = selRow || rows[0];

@@ -94,10 +94,11 @@ const TitleScene = {
   update(dt) {
     combatTick(dt);
     const idle = T - lastInput > 25;
-    if (idle !== this.demo) { this.demo = idle; fxGlitch(0.5); fxRoll(); sfxGlitch(true); if (idle) this.demoT = 0; }
+    if (idle !== this.demo) { this.demo = idle; fxGlitch(0.5); fxRoll(); sfxGlitch(true); if (idle) { this.demoT = 0; this.demoCounted = false; } }
     if (this.demo) {
       this.demoT += dt;
       if (this.demoT > 8 && !(meta.flags && meta.flags.demoSeen)) { if (!meta.flags) meta.flags = {}; meta.flags.demoSeen = 1; saveMeta(); }
+      if (this.demoT > 30 && !this.demoCounted) { this.demoCounted = true; meta.flags.demoRuns = (meta.flags.demoRuns || 0) + 1; saveMeta(); checkLore(); }
       // the demo player stops playing and turns to face the glass
       const pos = haunted(3) && scaresOn() && this.demoT % 30 > 12 && this.demoT % 30 < 19;
       if (pos && !G.possess) { fxGlitch(0.3); tone(45, 1.5, "sine", 0.12); }
@@ -203,9 +204,9 @@ function drawPause(sc, quitLabel, quitAct, extra) {
   endItems(sc);
   if (G.mode === "run") {
     const ids = ownedMods();
-    txt("YOUR MODS", W / 2, 162, C.gy, 1, "c");
+    txt("YOUR MODS " + ids.length + "/" + MOD_SLOTS, W / 2, 162, C.gy, 1, "c");
     if (!ids.length) txt("NONE YET", W / 2, 170, C.gy, 1, "c");
-    ids.slice(0, 8).forEach((id, i) => txt(MODS[id].n + (run.mods[id] > 1 ? " X" + run.mods[id] : ""), W / 2, 170 + i * 7, RAR_COL[MODS[id].r], 1, "c"));
+    ids.slice(0, MOD_SLOTS).forEach((id, i) => txt(modName(id), W / 2, 170 + i * 7, RAR_COL[MODS[id].r], 1, "c"));
   }
 }
 function combatKey(sc, k, quitAct) {

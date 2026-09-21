@@ -22,7 +22,11 @@ const FOE = {
 function baseStats() {
   return {arc:0.80, bandIn:8, bandOut:19, perfectD:12, pMul:1.55, ppMul:2.4, bounce:1, pBounce:2,
     seek:0.55, seekTurn:2.7, split:0, pierce:0, moveMul:1, pulseCd:5, coinMul:1, twin:false, zap:0,
-    reflex:0, glassHeal:false, perfectAll:false, mirror:false, phase:false};
+    reflex:0, glassHeal:false, perfectAll:false, mirror:false, phase:false,
+    // 4.7 mods
+    anchor:0, pulseR:1, dashCd:1, pSplit:0, cold:0, interest:0, bounty:0, spotter:false, mender:false, dmg:0, outMul:1,
+    longshot:0, stun:0, discharge:0, ram:0, whirl:false, gravity:0, laststand:false, leech:0, momentum:0,
+    nova:0, sat:0, failsafe:0, stopwatch:0, cont:false, afterimage:false};
 }
 
 let G = null;
@@ -32,7 +36,7 @@ function newCombat(o) {
     p: {x:ACX, y:ACY + 20, vx:0, vy:0, r:3.5, aim:-Math.PI / 2, inv:0, pulseCd:0, flash:0, dashT:0, dashCd:0},
     ghosts: [],
     lives: o.lives || 3, maxLives: o.maxLives || o.lives || 3,
-    bullets:[], foes:[], parts:[], floats:[], coins:[], drops:[], zaps:[],
+    bullets:[], foes:[], parts:[], floats:[], coins:[], drops:[], zaps:[], decoys:[], sats:null, anch:0, slowT:0,
     waves: o.waves || null, waveIdx: -1, spawnQ: [], waveT: 0.9, wave: 0,
     score:0, combo:1, comboT:0, bestChain:1, perfects:0, kills:0, hits:0, coinsGot:0,
     shake:0, hitstop:0, ts:1, flash:0, acc:0, t:0,
@@ -130,7 +134,14 @@ function dropCoins(x, y, n) {
 }
 
 /* ---------------- core helpers ---------------- */
-function curArc() { return G.S.arc * (G.buff === "wide" ? 1.5 : 1) * DLV().arc; }
+function curArc() {
+  const S = G.S;
+  let a = S.arc * (G.buff === "wide" ? 1.5 : 1) * DLV().arc;
+  if (S.anchor && G.anch) a *= 1 + 0.35 * S.anchor * G.anch;          // ANCHOR: wider while you stand still
+  if (lastStand()) a *= 1.4;
+  return Math.min(a, 2.9);
+}
+const lastStand = () => G.S.laststand && G.mode === "run" && G.lives === 1 && !G.over;
 function plateBlocks(f, hitAng) {
   if (G.S.phase) return false;
   let n = 0, arc = 0;
@@ -147,25 +158,26 @@ function fire(f, ang, speed, r, fast) {
     vx: Math.cos(ang) * speed * (G.bulletMul || 1), vy: Math.sin(ang) * speed * (G.bulletMul || 1), r: r || 1.5, friend:false, life:7,
     seek:0, bounce:0, chain:0, fast:!!fast, perfect:false, pierce:0, rally:0});
 }
-function setFriendly(b, ang, out, perfect) {
-  const S = G.S, p = G.p;
+function setFriendly(b, ang, out, perfect, o) {
+  const S = G.S, p = o || G.p;
   b.vx = Math.cos(ang) * out; b.vy = Math.sin(ang) * out;
   b.friend = true; b.seek = S.seek + (perfect ? 0.2 : 0); b.bounce = perfect ? S.pBounce : S.bounce;
   b.life = 4.5; b.r = perfect ? 2.5 : 2; b.chain = 0; b.perfect = !!perfect;
   b.pierce = S.pierce + (G.buff === "pierce" ? 1 : 0);
   b.x = p.x + Math.cos(ang) * 16; b.y = p.y + Math.sin(ang) * 16;
+  b.dist = S.nest && G.anch > 0.8 ? 999 : 0; b.nova = false;
 }
-function parry(b, ang, perfect) {
+function parry(b, ang, perfect, o) {
   const S = G.S, p = G.p;
   const spd = Math.hypot(b.vx, b.vy);
   G.parries = (G.parries || 0) + 1;
-  const out = Math.max(spd * (perfect ? S.ppMul : S.pMul), perfect ? 248 : 188);
-  setFriendly(b, ang, out, perfect);
-  const extra = S.split + (perfect && S.mirror ? 2 : 0);
+  const out = Math.max(spd * (perfect ? S.ppMul : S.pMul), perfect ? 248 : 188) * S.outMul;
+  setFriendly(b, ang, out, perfect, o);
+  const extra = S.split + (perfect ? S.pSplit : 0) + (perfect && S.mirror ? 2 : 0);
   for (let k = 1; k <= extra; k++) {
     const off = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.24;
     const nb = Object.assign({}, b);
-    setFriendly(nb, ang + off, out * 0.92, perfect);
+    setFriendly(nb, ang + off, out * 0.92, perfect, o);
     G.bullets.push(nb);
   }
   burst(b.x, b.y, perfect ? 12 : 7, perfect ? C.wh : C.bl, perfect ? 144 : 104, 0.32);
@@ -173,6 +185,7 @@ function parry(b, ang, perfect) {
   G.hitstop = Math.max(G.hitstop, perfect ? 0.07 : 0.03);
   p.flash = perfect ? 0.22 : 0.14;
   if (G.mode !== "attract") {
+    loreCatch(ang);
     if (perfect) {
       G.perfects++; G.runPerf++;
       addScore(30 * G.combo, b.x, b.y, C.wh);
@@ -180,6 +193,7 @@ function parry(b, ang, perfect) {
       G.combo++; if (G.combo > G.bestChain) G.bestChain = G.combo;
       ring(p.x, p.y, 28, C.wh, 0.26); fxGlitch(0.07);
       if (S.glassHeal && G.runPerf % 5 === 0 && G.lives < G.maxLives) { G.lives++; floatTxt(p.x, p.y - 24, "+1 SHIELD", C.li); }
+      if (S.stopwatch) { G.slowT = Math.max(G.slowT || 0, 0.45 * S.stopwatch * (S.timelord ? 2 : 1)); }
     } else addScore(10 * G.combo, b.x, b.y, C.bl);
     G.comboT = Math.max(G.comboT, perfect ? 3.2 : 1.6);
   }
@@ -188,19 +202,23 @@ function parry(b, ang, perfect) {
 }
 function doPulse() {
   if (!G || G.mode === "attract" || G.over || G.paused || G.p.pulseCd > 0) return;
-  const p = G.p, R = 47;
-  p.pulseCd = G.S.pulseCd;
+  const p = G.p, S = G.S, R = 47 * S.pulseR;
+  p.pulseCd = S.pulseCd;
   G.pulses = (G.pulses || 0) + 1;
   for (const b of G.bullets) {
     if (b.friend) continue;
     const dx = b.x - p.x, dy = b.y - p.y;
     if (Math.hypot(dx, dy) < R) parry(b, Math.atan2(dy, dx), G.S.perfectAll || G.S.overload);
   }
-  for (const f of G.foes) {
-    if (FOE[f.type].boss) continue;
+  for (const f of G.foes.slice()) {
+    if (!G.foes.includes(f)) continue;
+    const boss = FOE[f.type].boss;
     const dx = f.x - p.x, dy = f.y - p.y, d = Math.hypot(dx, dy) || 1;
-    if (d < R * 1.5) { f.vx += dx / d * 104; f.vy += dy / d * 104; }
+    if (!boss && d < R * 1.5) { f.vx += dx / d * 104; f.vy += dy / d * 104; }
+    if (S.stun && d < R * 1.5 && f.type !== "mine") f.stun = Math.max(f.stun || 0, boss ? S.stun * 0.3 : S.stun);
+    if (S.discharge && d < R * 1.3 && !f.dormant) { G.zaps.push({x1: p.x, y1: p.y, x2: f.x, y2: f.y, t: 0.16}); damageFoe(f, S.discharge + (S.thunder ? 1 : 0), 1, true); }
   }
+  if (S.stun) ring(p.x, p.y, R * 1.5, C.ye, 0.3);
   ring(p.x, p.y, R, C.bl, 0.42);
   burst(p.x, p.y, 14, C.bl, 130, 0.4);
   G.shake = Math.min(5, G.shake + 3);
@@ -219,13 +237,23 @@ function doDash() {
   if (!dx && !dy) { const sp = Math.hypot(p.vx, p.vy); if (sp > 5) { dx = p.vx / sp; dy = p.vy / sp; } else { dx = Math.cos(p.aim); dy = Math.sin(p.aim); } }
   const m = Math.hypot(dx, dy) || 1;
   p.vx = dx / m * 340 * G.S.moveMul; p.vy = dy / m * 340 * G.S.moveMul;
-  p.dashT = 0.13; p.dashCd = 1.1; p.inv = Math.max(p.inv, 0.22);
+  const S = G.S;
+  p.dashT = 0.13; p.dashCd = 1.1 * S.dashCd; p.inv = Math.max(p.inv, S.juggernaut ? 0.4 : 0.22);
   G.dashes = (G.dashes || 0) + 1;
+  if (S.whirl) p.whirlT = 0.3;
+  if (S.afterimage) G.decoys.push({x: p.x, y: p.y, t: S.deadringer ? 2.4 : 1.2, max: S.deadringer ? 2.4 : 1.2});
   noise(0.16, 0.12, 900, 3200); tone(420, 0.08, "square", 0.06, 900);
 }
 function hurt() {
-  const p = G.p;
+  const p = G.p, S = G.S;
   if (p.inv > 0 || G.mode === "attract" || G.over) return;
+  // FAILSAFE: the first hit (or hits) of a fight turns into a free pulse
+  if (S.failsafe && (G.fsUsed || 0) < S.failsafe) {
+    G.fsUsed = (G.fsUsed || 0) + 1;
+    const cd = p.pulseCd; p.pulseCd = 0; doPulse(); p.pulseCd = cd;
+    p.inv = 1; floatTxt(p.x, p.y - 16, "FAILSAFE", C.li); fxGlitch(0.3); padRumble(0.4, 0.3, 120);
+    return;
+  }
   G.lives--; G.hits++;
   p.inv = 1.4; G.combo = 1; G.comboT = 0;
   fxGlitch(0.75); fxWobble(0.9); sfxGlitch(true); padRumble(0.9, 0.6, 220);
@@ -235,6 +263,13 @@ function hurt() {
   for (let i = G.bullets.length - 1; i >= 0; i--) {
     const b = G.bullets[i];
     if (!b.friend && Math.hypot(b.x - p.x, b.y - p.y) < 60) G.bullets.splice(i, 1);
+  }
+  if (G.lives <= 0 && S.cont && !G.contUsed && G.mode === "run") {
+    // CONTINUE?: one more go, then the mod is spent
+    G.contUsed = true; G.lives = 1; p.inv = 2.6;
+    for (let i = G.bullets.length - 1; i >= 0; i--) if (!G.bullets[i].friend) G.bullets.splice(i, 1);
+    banner("CONTINUE?", C.ye, 2.2); seq([392, 330, 262], 180, "square", 0.12);
+    if (G.dark && haunted(1)) setTimeout(() => whisper("HE LETS YOU. THIS ONCE."), 700);
   }
   if (G.lives <= 0) {
     G.lives = 0; G.over = true; G.won = false; G.endT = 1.5;
@@ -274,7 +309,16 @@ function killFoe(f, idx, chain, noZap) {
     chain > 1 ? sfx.chain(chain) : sfx.kill();
     maybeDrop(f.x, f.y, f.type === "armor" ? 0.34 : 0.085);
   }
-  if (G.mode === "run") dropCoins(f.x, f.y, base.coins + (f.elite ? 3 : 0));
+  if (G.mode === "run") {
+    dropCoins(f.x, f.y, base.coins + (f.elite ? 3 : 0) + (f.type === "mine" || f.type === "shard" ? 0 : G.S.bounty));
+    if (G.S.leech && !G.over) {
+      G.leechK = (G.leechK || 0) + 1;
+      if (G.leechK >= [0, 20, 15, 10][Math.min(3, G.S.leech)]) {
+        G.leechK = 0;
+        if (G.lives < G.maxLives) { G.lives++; floatTxt(G.p.x, G.p.y - 18, "+1 SHIELD", C.li); ring(G.p.x, G.p.y, 20, C.li, 0.3); }
+      }
+    }
+  }
   G.foes.splice(idx, 1);
   if (f.type === "splitter") for (const k of [-1, 1]) spawnFoe("shard", {x: f.x + k * 8, y: f.y});
   if (!noZap && G.S.zap > 0 && G.mode !== "attract") {

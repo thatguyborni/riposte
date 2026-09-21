@@ -56,7 +56,7 @@ function stormZap(b) {
 function enterPhase2(f) {
   f.p2 = true;
   banner(f.type === "echo" ? "IT LEARNS" : f.type === "milo" ? "PLAYER 2" : "PHASE 2", C.rd, 1.5);
-  if (f.type === "milo") { hauntFace(0.5, true); G.lightsOut = 1.5; whisper("MY TURN", {big: true, x: W / 2, y: 150, life: 2}); }
+  if (f.type === "milo") { loreSetFlag("miloP2"); hauntFace(0.5, true); G.lightsOut = 1.5; whisper("MY TURN", {big: true, x: W / 2, y: 150, life: 2}); }
   fxGlitch(0.85); fxRoll(); fxWobble(0.5); sfxGlitch(true); padRumble(0.8, 0.8, 300);
   G.shake = 6; G.hitstop = Math.max(G.hitstop, 0.14); G.flash = Math.max(G.flash, 0.4);
   // a breath: nearby hostile shots are wiped by the shockwave

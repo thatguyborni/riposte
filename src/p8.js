@@ -18,6 +18,7 @@ function finishNode() {
   if (n) { n.visited = true; run.curId = n.id; }
   run.pendingId = null;
   if (run.lives <= 0) return go(RunOver, endRun("dead"));
+  if (run.pendingMods && run.pendingMods.length) return go(SwapScene);   // slots full: choose first
   go(RunMap);
 }
 
@@ -73,6 +74,7 @@ const RunMap = {
   enter() { music(run.depth === 5 ? "basement" : run.depth === 4 ? "signal" : "map"); this.showMods = false; saveRun(); this.hover = -1; },
   draw() {
     if (!run) return go(TitleScene);
+    if (run.pendingMods && run.pendingMods.length) return go(SwapScene);
     const pal = PALS[DEPTH_PAL[run.depth]];
     menuBg(pal);
     const nodes = run.map.nodes, avail = availNodes();
@@ -121,8 +123,9 @@ const RunMap = {
       txt(info[0], 4, 231, NODE_COL[selNode.type]);
       txt(info[1], 4 + tw(info[0]) + 8, 231, C.lg);
     } else txt(isTouch() ? "TAP A ROOM TO SEE IT, AGAIN TO GO" : "CHOOSE YOUR PATH", 4, 231, C.lg);
-    if (isTouch() || PAD.connected) btn(this, "MODS", W - 44, 227, 40, 11, () => { this.showMods = true; }, {col: C.la, oneTap: true});
-    else txt("TAB: MODS", W - 4, 231, C.gy, 1, "r");
+    const nm = ownedMods().length + "/" + MOD_SLOTS;
+    if (isTouch() || PAD.connected) btn(this, "MODS " + nm, W - 58, 227, 54, 11, () => { this.showMods = true; }, {col: C.la, oneTap: true});
+    else txt("TAB: MODS " + nm, W - 4, 231, C.gy, 1, "r");
     if (this.showMods) drawModsOverlay();
   },
   key(k) {
@@ -148,12 +151,17 @@ const RunMap = {
 };
 function drawModsOverlay() {
   panel(40, 30, 304, 180, C.la);
-  txt("YOUR MODS  ~  SHIELD: " + SHIELDS[run.shield].n, W / 2, 38, C.ye, 1, "c");
   const ids = ownedMods();
-  if (!ids.length) txt("NO MODS YET. WIN FIGHTS TO EARN THEM.", W / 2, 60, C.gy, 1, "c");
+  txt("YOUR MODS " + ids.length + "/" + MOD_SLOTS + "  ~  SHIELD: " + SHIELDS[run.shield].n, W / 2, 38, C.ye, 1, "c");
   const extra = activeSynergies().map(sy => ({n: "SYNERGY: " + sy.n, d: sy.d, c: C.pk}))
     .concat((run.curses || []).map(c => ({n: "CURSE: " + CURSES[c].n, d: CURSES[c].d, c: C.pl})));
-  const rows = ids.map(id => ({n: MODS[id].n + (run.mods[id] > 1 ? " X" + run.mods[id] : ""), d: MODS[id].d, c: RAR_COL[MODS[id].r]})).concat(extra);
+  const slots = [];
+  for (let i = 0; i < MOD_SLOTS; i++) {
+    const id = ids[i];
+    slots.push(id ? {n: modName(id) + (modLv(id) >= modMax(id) ? "  (MAX)" : ""), d: MODS[id].d, c: RAR_COL[MODS[id].r]}
+      : {n: "EMPTY SLOT", d: "WIN FIGHTS, OPEN CHESTS OR SHOP TO FILL IT.", c: C.gy});
+  }
+  const rows = slots.concat(extra);
   rows.slice(0, 12).forEach((r, i) => {
     const y = 52 + i * 12;
     txt(r.n, 50, y, r.c);
@@ -172,6 +180,7 @@ const RunFight = {
     newCombat({mode: "run", pal: DEPTH_PAL[run.depth], S: runStats(), lives: run.lives, maxLives: run.maxLives,
       waves, diff: depthDiff(run.depth, n.layer), elite: kind === "elite" || run.depth === 4, runPerf: run.runPerf,
       onEnd: res => fightEnd(res, n)});
+    G.leechK = run.leechK || 0;
     const cm = combatCurseMuls();
     G.bulletMul = cm.bullet; G.fireMul = cm.fire;
     G.touch = lastPointerTouch;
@@ -193,11 +202,13 @@ function fightEnd(res, n) {
   run.lives = G.lives; run.maxLives = G.maxLives;
   run.kills += G.kills; run.perfects += G.perfects; run.runPerf = G.runPerf;
   run.coins += Math.round(G.coinsGot * G.S.coinMul) + (res.win ? (G.gradeBonus || 0) : 0);
+  modsAfterFight(res.win);
   if (res.win && G.grade) { if (!run.grades) run.grades = {S: 0, A: 0, B: 0, C: 0}; run.grades[G.grade]++; }
   if (res.win && n.rescue) rescueNpc(n.rescue);
   meta.stats.kills += G.kills; meta.stats.perfects += G.perfects;
   if (!res.win) return go(RunOver, endRun("dead"));
   run.fights++;
+  if ((G.moved || 0) < 120 && G.kills >= 4 && !(meta.flags && meta.flags.still)) { if (!meta.flags) meta.flags = {}; meta.flags.still = 1; }
   if (G.perfects >= 10 && !meta.shields.mirror) {
     meta.shields.mirror = true; meta.secrets.mirror = true; sfx.secret();
     toast("SECRET SHIELD UNLOCKED: MIRROR", C.pk);
@@ -223,18 +234,30 @@ function fightEnd(res, n) {
 }
 
 /* ---------------- reward (pick a mod) ---------------- */
-function drawCard(sc, id, x, y, w, h, act, extra) {
-  const m = MODS[id], col = RAR_COL[m.r];
-  const sel = btn(sc, null, x, y, w, h, act, {col, dim: col});
-  R(x + 2, y + 2, w - 4, h - 4, sel ? "#16131F" : C.ink);
-  RO(x + 2, y + 2, w - 4, h - 4, sel ? col : C.nv);
+function drawCardFace(id, x, y, w, h, sel) {
+  const m = MODS[id], col = RAR_COL[m.r], kind = MOD_KIND[m.k] || MOD_KIND.odd;
   txt(RAR_NAME[m.r], x + w / 2, y + 7, col, 1, "c");
-  wrap(m.n, w - 10).forEach((l, i) => txt(l, x + w / 2, y + 18 + i * 7, C.wh, 1, "c"));
-  txt("@", x + w / 2 - 1, y + 36, col);
-  wrap(m.d, w - 12).forEach((l, i) => txt(l, x + w / 2, y + 48 + i * 7, C.lg, 1, "c"));
-  const own = run.mods[id] || 0;
-  if (own) txt("OWNED X" + own, x + w / 2, y + h - 12, C.gy, 1, "c");
-  if (extra) txt(extra, x + w / 2, y + h - (own ? 20 : 12), C.ye, 1, "c");
+  wrap(m.n, w - 10).slice(0, 2).forEach((l, i) => txt(l, x + w / 2, y + 18 + i * 7, C.wh, 1, "c"));
+  txt(kind[0], x + w / 2, y + 35, kind[1], 1, "c");
+  wrap(m.d, w - 12).forEach((l, i) => txt(l, x + w / 2, y + 46 + i * 7, C.lg, 1, "c"));
+}
+// o.slot: a mod you hold (shows its level); otherwise an offer (shows what taking it does)
+function drawCard(sc, id, x, y, w, h, act, extra, o) {
+  o = o || {};
+  const m = MODS[id], col = o.armed ? C.rd : RAR_COL[m.r];
+  const sel = btn(sc, null, x, y, w, h, act, {col, dim: col});
+  R(x + 2, y + 2, w - 4, h - 4, o.armed ? "#2A0A12" : sel ? "#16131F" : C.ink);
+  RO(x + 2, y + 2, w - 4, h - 4, o.armed ? C.rd : sel ? col : C.nv);
+  drawCardFace(id, x, y, w, h, sel);
+  let foot, fc = C.gy;
+  if (o.slot) { foot = o.armed ? "DROP IT?" : "LEVEL " + ROMAN[modLv(id)]; fc = o.armed ? C.rd : C.lg; }
+  else {
+    const f = modFate(id);
+    foot = f === "up" ? "LEVEL UP > " + ROMAN[modLv(id) + 1] : f === "max" ? "ALREADY MAXED" : f === "swap" ? "SLOTS FULL: SWAP" : "EMPTY SLOT";
+    fc = f === "up" ? C.li : f === "swap" ? C.or : C.gy;
+  }
+  txt(foot, x + w / 2, y + h - 12, fc, 1, "c");
+  if (extra) txt(extra, x + w / 2, y + h - 20, C.ye, 1, "c");
 }
 const RewardScene = {
   enter(o) {
@@ -246,19 +269,20 @@ const RewardScene = {
   draw() {
     menuBg(PALS[DEPTH_PAL[run.depth]]);
     runHeader();
-    title(this.kind === "vault" ? "THE VAULT OPENS" : this.kind === "altar" ? "THE ALTAR PAYS" : this.kind === "treasure" ? "TREASURE" : "CHOOSE A MOD", 24);
+    title(this.kind === "vault" ? "THE VAULT OPENS" : this.kind === "altar" ? "THE ALTAR PAYS" : this.kind === "treasure" ? "TREASURE" : "CHOOSE A MOD", 20);
     beginItems(this);
     const n = this.cards.length, cw = n > 3 ? 84 : 100, gap = 8;
     const x0 = W / 2 - (n * cw + (n - 1) * gap) / 2;
     this.cards.forEach((id, i) => drawCard(this, id, x0 + i * (cw + gap), 52, cw, 100, () => { gainMod(id); finishNode(); }));
     btn(this, "SKIP (+10 COINS)", W / 2 - 50, 166, 100, 12, () => { run.coins += 10; finishNode(); }, {col: C.gy});
     endItems(this);
+    drawSlotStrip(39);
   }
 };
 
 /* ---------------- shop ---------------- */
 const ShopScene = {
-  enter() { this.stock = rollChoices(3, null).map(id => ({id, sold: false})); this.reroll = 15; this.repairs = 0; music("map"); },
+  enter(o) { if (o && o.keep) return music("map"); this.stock = rollChoices(3, null).map(id => ({id, sold: false})); this.reroll = 15; this.repairs = 0; music("map"); },
   draw() {
     menuBg(PALS[DEPTH_PAL[run.depth]]);
     runHeader();
@@ -268,7 +292,11 @@ const ShopScene = {
       const x = 22 + i * 92;
       if (s.sold) { RO(x, 42, 84, 108, C.nv); txt("SOLD", x + 42, 94, C.gy, 1, "c"); this.items.push({x, y: 42, w: 84, h: 108, act: () => {}, disabled: true}); return; }
       const price = Math.round(MOD_PRICE[MODS[s.id].r] * (npcHere("wren") ? 0.85 : 1));
-      drawCard(this, s.id, x, 42, 84, 108, () => { if (run.coins >= price) { run.coins -= price; gainMod(s.id); s.sold = true; sfx.pick(); } else { sfx.deny(); toast("NOT ENOUGH COINS", C.rd); } }, "$" + price);
+      drawCard(this, s.id, x, 42, 84, 108, () => {
+        if (run.coins < price) { sfx.deny(); return toast("NOT ENOUGH COINS", C.rd); }
+        if (modFate(s.id) === "swap") return go(SwapScene, {id: s.id, price, done: took => { if (took) { run.coins -= price; s.sold = true; } go(ShopScene, {keep: true}); }});
+        run.coins -= price; gainMod(s.id); s.sold = true; sfx.pick();
+      }, "$" + price);
     });
     const bx = 300;
     const rep = npcHere("wren") ? 30 : 35;
@@ -284,6 +312,7 @@ const ShopScene = {
     btn(this, "LEAVE", bx, 136, 76, 14, finishNode, {col: C.gy});
     endItems(this);
     txt("REPAIR ADDS", bx + 38, 94, C.gy, 1, "c"); txt("ONE SHIELD", bx + 38, 101, C.gy, 1, "c");
+    drawSlotStrip(158);
   }
 };
 
@@ -306,16 +335,19 @@ const RestScene = {
     beginItems(this);
     const heal = run.asc >= 3 ? 1 : 2;
     btn(this, "REPAIR +" + heal + " SHIELD" + (heal > 1 ? "S" : ""), W / 2 - 70, 130, 140, 14, () => { run.lives = Math.min(run.maxLives, run.lives + heal); finishNode(); }, {col: C.li, disabled: run.lives >= run.maxLives});
-    const has = ownedMods().length > 0;
-    btn(this, "TUNE A RANDOM MOD", W / 2 - 70, 150, 140, 14, () => { const m = pick(ownedMods()); gainMod(m); toast(MODS[m].n + " TUNED", C.bl); finishNode(); }, {col: C.bl, disabled: !has});
-    btn(this, "MOVE ON", W / 2 - 70, 170, 140, 14, finishNode, {col: C.gy});
+    // tune one mod of your choice up a level
+    const tun = tuneable();
+    tun.forEach((id, i) => btn(this, "TUNE " + MODS[id].n + " > " + ROMAN[modLv(id) + 1], W / 2 - 80, 148 + i * 16, 160, 13,
+      () => { equipMod(id); toast(MODS[id].n + " IS NOW LEVEL " + ROMAN[modLv(id)], C.bl); finishNode(); }, {col: C.bl}));
+    if (!tun.length) btn(this, ownedMods().length ? "EVERY MOD IS MAXED" : "NO MODS TO TUNE", W / 2 - 80, 148, 160, 13, () => {}, {disabled: true});
+    btn(this, "MOVE ON", W / 2 - 80, 152 + Math.max(1, tun.length) * 16, 160, 13, finishNode, {col: C.gy});
     endItems(this);
   }
 };
 
 /* ---------------- events ---------------- */
 const EventScene = {
-  enter(ev) { this.ev = ev; this.result = null; run.usedEvents.push(ev.id); music(run.depth === 4 ? "signal" : "map"); },
+  enter(ev) { this.ev = ev; this.result = null; run.usedEvents.push(ev.id); music(run.depth === 4 ? "signal" : "map"); if (ev.id === "missing") loreSetFlag("sawMissing"); },
   draw() {
     menuBg(PALS[DEPTH_PAL[run.depth]]);
     runHeader();

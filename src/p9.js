@@ -3,7 +3,7 @@
    ================================================================ */
 const WorkshopScene = {
   back() { go(backTarget()); },
-  enter() { this.tab = this.tab || "shields"; music("map"); },
+  enter() { this.tab = this.tab || "shields"; this.page = this.page || 0; music("map"); },
   rows() {
     if (this.tab === "shields") return Object.keys(SHIELDS).map(k => {
       const s = SHIELDS[k], own = meta.shields[k];
@@ -20,12 +20,25 @@ const WorkshopScene = {
       return {n: u.n + (u.max > 1 ? " " + lv + "/" + u.max : ""), d: u.d, state: "@" + c, col: C.wh, dis: meta.tokens < c,
         act: () => { meta.tokens -= c; meta.upg[k]++; saveMeta(); sfx.pick(); toast(u.n + " UPGRADED", C.or); }};
     });
-    return Object.keys(MOD_UNLOCK_COST).map(k => {
-      const m = MODS[k], c = MOD_UNLOCK_COST[k], own = meta.unlocked.includes(k);
-      if (own) return {n: m.n, d: m.d, state: "IN POOL", col: RAR_COL[m.r], dis: true, act: () => {}};
-      return {n: m.n, d: m.d, state: "@" + c, col: RAR_COL[m.r], dis: meta.tokens < c,
+    // the mod pool: everything that can turn up in a descent, cheapest first
+    // what you can still buy first (cheapest first), then secrets, then what's already in the pool
+    const rank = k => meta.unlocked.includes(k) ? 2000 : MOD_SECRET[k] ? 1000 : (MOD_UNLOCK_COST[k] || 0);
+    const ids = Object.keys(MODS).sort((a, b) => (rank(a) - rank(b)) || a.localeCompare(b));
+    return ids.map(k => {
+      const m = MODS[k], c = MOD_UNLOCK_COST[k], own = meta.unlocked.includes(k), kd = (MOD_KIND[m.k] || MOD_KIND.odd)[0];
+      const d = RAR_NAME[m.r] + " " + kd + ". " + m.d + (m.max === 1 ? " (ONE LEVEL)" : "");
+      if (own) return {n: m.n, d, state: c ? "IN POOL" : "FREE", col: RAR_COL[m.r], dis: true, act: () => {}};
+      if (MOD_SECRET[k]) return {n: "???", d: "A SECRET MOD. " + MOD_SECRET[k], state: "SECRET", col: C.pk, dis: true, act: () => {}};
+      return {n: m.n, d, state: "@" + c, col: RAR_COL[m.r], dis: meta.tokens < c,
         act: () => { meta.tokens -= c; meta.unlocked.push(k); saveMeta(); sfx.pick(); toast(m.n + " CAN NOW APPEAR IN RUNS", C.or); }};
     });
+  },
+  key(k) {
+    if (this.tab !== "mods") return false;
+    const pages = Math.ceil(this.rows().length / 10);
+    if (k === "q" || k === "pageup") { this.page = (this.page + pages - 1) % pages; sfx.move(); return true; }
+    if (k === "e" || k === "pagedown") { this.page = (this.page + 1) % pages; sfx.move(); return true; }
+    return false;
   },
   draw() {
     menuBg(PALS.foundry);
@@ -33,17 +46,25 @@ const WorkshopScene = {
     txt("TOKENS  @" + meta.tokens, W - 8, 16, C.or, 1, "r");
     beginItems(this);
     const tabs = [["shields", "SHIELDS"], ["upgrades", "UPGRADES"], ["mods", "MOD POOL"]];
-    tabs.forEach(([k, l], i) => btn(this, l, 40 + i * 104, 32, 96, 12, () => { this.tab = k; }, {col: this.tab === k ? C.ye : C.lg, dim: this.tab === k ? C.ye : C.gy}));
-    const rows = this.rows();
+    tabs.forEach(([k, l], i) => btn(this, l, 40 + i * 104, 32, 96, 12, () => { this.tab = k; this.page = 0; }, {col: this.tab === k ? C.ye : C.lg, dim: this.tab === k ? C.ye : C.gy}));
+    let rows = this.rows();
+    const paged = this.tab === "mods", per = 10, pages = Math.ceil(rows.length / per);
+    if (paged) { this.page = clamp(this.page || 0, 0, pages - 1); rows = rows.slice(this.page * per, this.page * per + per); }
+    const gap = paged ? 13 : 15, rh = paged ? 12 : 13;
     let selRow = null;
     rows.forEach((r, i) => {
-      const y = 52 + i * 15;
-      const s = btn(this, null, 40, y, 304, 13, r.act, {col: r.col, dim: C.nv, disabled: !!r.dis});
+      const y = 50 + i * gap;
+      const s = btn(this, null, 40, y, 304, rh, r.act, {col: r.col, dim: C.nv, disabled: !!r.dis});
       const lit = s && !r.dis;
-      txt(r.n, 46, y + 4, lit ? C.k : r.col);
-      txt(r.state, 338, y + 4, lit ? C.k : (r.state.startsWith("@") ? (r.dis ? C.gy : C.or) : C.lg), 1, "r");
+      txt(r.n, 46, y + Math.floor((rh - 5) / 2), lit ? C.k : r.col);
+      txt(r.state, 338, y + Math.floor((rh - 5) / 2), lit ? C.k : (r.state.startsWith("@") ? (r.dis ? C.gy : C.or) : r.state === "SECRET" ? C.pk : C.lg), 1, "r");
       if (s) selRow = r;
     });
+    if (paged && pages > 1) {
+      btn(this, "< PREV", 40, 222, 60, 12, () => { this.page = (this.page + pages - 1) % pages; }, {col: C.lg});
+      btn(this, "NEXT >", 284, 222, 60, 12, () => { this.page = (this.page + 1) % pages; }, {col: C.lg});
+      txt("PAGE " + (this.page + 1) + "/" + pages + "  ~  " + meta.unlocked.filter(k => MODS[k]).length + "/" + Object.keys(MODS).length + " IN YOUR POOL", W / 2, 186, C.gy, 1, "c");
+    }
     btn(this, "BACK", W / 2 - 30, 222, 60, 12, () => this.back(), {col: C.gy});
     endItems(this);
     const shown = selRow || rows[0];

@@ -76,7 +76,8 @@ function combatStep(dt) {
   G.t += dt;
   if (G.buff) { G.buffT -= dt; if (G.buffT <= 0) G.buff = null; }
   if (G.lightsOut > 0) G.lightsOut -= dt;
-  const slowed = G.buff === "slow";
+  if (G.slowT > 0) G.slowT -= dt;                    // STOPWATCH
+  const slowed = G.buff === "slow" || G.slowT > 0;
 
   /* ---- player ---- */
   let ax = 0, ay = 0;
@@ -107,9 +108,11 @@ function combatStep(dt) {
       if (Math.hypot(PAD.rx, PAD.ry) > 0.35) p.aim = Math.atan2(PAD.ry, PAD.rx);   // otherwise hold the last aim
     } else p.aim = Math.atan2(mouse.y - p.y, mouse.x - p.x);
   }
-  const boost = (slowed ? 1.6 : 1) * S.moveMul;
+  const boost = (slowed ? 1.6 : 1) * S.moveMul * (S.redmist && G.lives === 1 ? 1.3 : 1);
   if (p.dashT > 0) { p.dashT -= dt; if ((G.t * 60 | 0) % 2 === 0) G.ghosts.push({x: p.x, y: p.y, t: 0.22}); }
   if (p.dashCd > 0) p.dashCd -= dt;
+  if (p.whirlT > 0) p.whirlT -= dt;
+  modTick(dt);
   for (let i = G.ghosts.length - 1; i >= 0; i--) { G.ghosts[i].t -= dt; if (G.ghosts[i].t <= 0) G.ghosts.splice(i, 1); }
   const ACC = 700 * boost, MAXV = 122 * boost;
   p.vx += ax * ACC * dt; p.vy += ay * ACC * dt;
@@ -117,6 +120,7 @@ function combatStep(dt) {
   const sp = Math.hypot(p.vx, p.vy);
   if (sp > MAXV && p.dashT <= 0) { p.vx = p.vx / sp * MAXV; p.vy = p.vy / sp * MAXV; }
   p.x += p.vx * dt; p.y += p.vy * dt;
+  if (G.mode !== "attract") G.moved = (G.moved || 0) + Math.hypot(p.vx, p.vy) * dt;
   const pad = 8;
   if (p.x < AX0 + pad) { p.x = AX0 + pad; p.vx *= -0.35; }
   if (p.x > AX1 - pad) { p.x = AX1 - pad; p.vx *= -0.35; }
@@ -138,6 +142,9 @@ function combatStep(dt) {
     const base = FOE[f.type];
     f.born += dt;
     if (f.hit > 0) f.hit -= dt;
+    if (f.stun > 0) f.stun -= dt;
+    if (f.slowT > 0) f.slowT -= dt;
+    const stunned = f.stun > 0, fsl = fslow * (f.slowT > 0 ? (base.boss ? 0.75 : 0.5) : 1);
     if (f.flashT > 0) f.flashT -= dt;
     const dx = p.x - f.x, dy = p.y - f.y, dist = Math.hypot(dx, dy) || 1;
     f.ang = Math.atan2(dy, dx);
@@ -169,7 +176,8 @@ function combatStep(dt) {
       continue;
     }
 
-    if (f.type === "hollow") hollowStep(f, p, dt, dx, dy, dist);
+    if (stunned) { f.vx *= Math.pow(0.03, dt); f.vy *= Math.pow(0.03, dt); }
+    else if (f.type === "hollow") hollowStep(f, p, dt, dx, dy, dist);
     else if (f.type === "mimic" && f.dormant) mimicStep(f, p, dt, dist);
     else if (f.type === "rusher") {
       const acc = base.spd * 2.4;
@@ -197,12 +205,17 @@ function combatStep(dt) {
         if (f.dash <= 0) { f.dash = f.p2 ? 1.1 + rand() * 0.8 : 2 + rand() * 1.5; const a = rand() * TAU; f.vx += Math.cos(a) * 150; f.vy += Math.sin(a) * 150; f.orbit *= -1; }
       }
     }
-    f.x += f.vx * dt * fslow; f.y += f.vy * dt * fslow;
+    f.x += f.vx * dt * fsl; f.y += f.vy * dt * fsl;
     if (f.born > 1.5) { f.x = clamp(f.x, AX0 + 6, AX1 - 6); f.y = clamp(f.y, AY0 + 6, AY1 - 6); }
-    foeDefense(f, base, p, dist, dt * fslow);
+    if (!stunned) foeDefense(f, base, p, dist, dt * fsl);
     if (!G.foes.includes(f)) continue;
 
-    if (f.type !== "rusher" && f.born > (base.boss ? 1.4 : 0.6) && !G.over) foeFire(f, dt * fslow, diff);
+    if (!stunned && f.type !== "rusher" && f.born > (base.boss ? 1.4 : 0.6) && !G.over) foeFire(f, dt * fsl, diff);
+    // BATTERING RAM: dashing through something hurts it
+    if (S.ram && p.dashT > 0 && G.mode !== "attract" && f.ramId !== G.dashes && Math.hypot(p.x - f.x, p.y - f.y) < f.r + 9 && !f.dormant) {
+      f.ramId = G.dashes; burst(f.x, f.y, 10, C.li, 90, 0.3); G.shake = Math.min(5, G.shake + 2); sfx.clank();
+      if (damageFoe(f, S.ram + (S.juggernaut ? 1 : 0), 1)) continue;
+    }
 
     if (G.mode !== "attract" && p.inv <= 0 && !G.over && dist < f.r + p.r) {
       hurt();
@@ -256,8 +269,10 @@ function combatStep(dt) {
         b.vx = Math.cos(ba) * bs; b.vy = Math.sin(ba) * bs;
       }
     }
+    if (!b.friend && S.gravity && !G.over) gravityBend(b, dt);
     const bs = (!b.friend && slowed) ? 0.45 : 1;
     b.x += b.vx * dt * bs; b.y += b.vy * dt * bs;
+    if (b.friend) b.dist = (b.dist || 0) + Math.hypot(b.vx, b.vy) * dt;
 
     if (b.x < AX0 + 2 || b.x > AX1 - 2 || b.y < AY0 + 2 || b.y > AY1 - 2) {
       if (b.friend && b.bounce > 0) {
@@ -271,10 +286,12 @@ function combatStep(dt) {
 
     if (!b.friend) {
       if (G.over) continue;
+      if (S.sat && satBlock(b)) { G.bullets.splice(i, 1); continue; }
+      if (G.decoys.length && decoyCatch(b)) continue;
       const pdx = b.x - p.x, pdy = b.y - p.y, pd = Math.hypot(pdx, pdy);
       if (pd > S.bandIn && pd < S.bandOut && (pdx * b.vx + pdy * b.vy) < 0) {
         const ang = Math.atan2(pdy, pdx);
-        if (angDiff(ang, p.aim) < arc || (S.twin && angDiff(ang, p.aim + Math.PI) < arc * 0.8)) {
+        if (angDiff(ang, p.aim) < arc || (S.twin && angDiff(ang, p.aim + Math.PI) < arc * 0.8) || p.whirlT > 0) {
           parry(b, ang, S.perfectAll || pd <= S.perfectD); continue;
         }
       }
@@ -316,11 +333,13 @@ function combatStep(dt) {
           break;
         }
         burst(b.x, b.y, 5, C.bl, 64, 0.3);
-        const dmg = 1 + (b.rally >= 2 ? 1 : 0) + (b.perfect && S.glassCannon ? 1 : 0);
+        const dmg = 1 + (b.rally >= 2 ? 1 : 0) + (b.perfect && S.glassCannon ? 1 : 0) + (b.nova ? 0 : modDamage(b, f));
         f.hp -= dmg; f.hit = 0.12;
+        if (S.cold && f.hp > 0) f.slowT = Math.max(f.slowT || 0, S.cold);
         if (f.hp <= 0) {
           b.chain++;
           killFoe(f, j, b.chain);
+          if (S.nova && !b.nova) novaBurst(f.x, f.y);
           b.vx *= 0.82; b.vy *= 0.82; b.seek = 0.25;
         } else {
           if (b.pierce > 0) { b.pierce--; b.vx *= 0.7; b.vy *= 0.7; b.seek = 0.3; }
@@ -333,7 +352,7 @@ function combatStep(dt) {
   }
 
   for (let i = G.zaps.length - 1; i >= 0; i--) { G.zaps[i].t -= dt; if (G.zaps[i].t <= 0) G.zaps.splice(i, 1); }
-  if (G.comboT > 0) { G.comboT -= dt; if (G.comboT <= 0) G.combo = 1; }
+  if (G.comboT > 0) { G.comboT -= dt / (1 + 0.5 * S.momentum); if (G.comboT <= 0) G.combo = 1; }
   for (let i = G.parts.length - 1; i >= 0; i--) {
     const q = G.parts[i];
     q.life -= dt;
