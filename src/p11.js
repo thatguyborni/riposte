@@ -17,7 +17,8 @@ const SETTING_ROWS = [
   {k: "taim",    n: "TOUCH AIM",       type: "opt", opts: ["ASSIST", "MANUAL"], hidden: () => !COARSE},
   {k: "tsize",   n: "TOUCH BUTTONS",   type: "opt", opts: ["SMALL", "NORMAL", "LARGE"], hidden: () => !COARSE},
   {k: "tfs",     n: "AUTO FULLSCREEN", type: "bool", hidden: () => !COARSE || !document.fullscreenEnabled},
-  {k: "haunt",   n: "HAUNTING",        type: "opt", opts: ["OFF", "SUBTLE", "FULL"], hidden: () => !meta.hauntSeen}
+  {k: "helper",  n: "CATCH HELPER",    type: "opt", opts: ["OFF", "UNTIL IT CLICKS", "ALWAYS"]},
+  {k: "haunt",   n: "HAUNTING",        type: "opt", opts: ["OFF", "SUBTLE", "FULL", "TOO MUCH"], hidden: () => !meta.hauntSeen}
 ];
 const visibleSettings = () => SETTING_ROWS.filter(r => !r.hidden || !r.hidden());
 function settingValue(r) {
@@ -26,6 +27,7 @@ function settingValue(r) {
   if (r.type === "bool") return v === false ? "OFF" : "ON";
   if (r.type === "lvl") { const n = v == null ? 2 : v; return "[" + "|".repeat(n + 1) + ".".repeat(r.opts.length - n - 1) + "] " + r.opts[n]; }
   if (r.k === "haunt" && v == null) return r.opts[2];
+  if (r.k === "helper" && v == null) return r.opts[1];
   return r.opts[v == null ? 0 : v] || r.opts[0];
 }
 function changeSetting(r, dir) {
@@ -33,7 +35,7 @@ function changeSetting(r, dir) {
   if (r.type === "num") s[r.k] = clamp((s[r.k] == null ? 8 : s[r.k]) + dir, r.min, r.max);
   else if (r.type === "lvl") s[r.k] = clamp((s[r.k] == null ? 2 : s[r.k]) + dir, 0, r.opts.length - 1);
   else if (r.type === "bool") s[r.k] = s[r.k] === false;
-  else { const n = r.opts.length, cur = s[r.k] == null ? (r.k === "haunt" ? 2 : 0) : s[r.k]; s[r.k] = ((cur + dir) % n + n) % n; }
+  else { const n = r.opts.length, cur = s[r.k] == null ? (r.k === "haunt" ? 2 : r.k === "helper" ? 1 : 0) : s[r.k]; s[r.k] = ((cur + dir) % n + n) % n; }
   applyVolumes(); saveMeta();
   sfx.move();
   if (r.k === "effects" || r.k === "crt" || r.k === "curve" || r.k === "tint") fxGlitch(0.4);

@@ -107,6 +107,7 @@ function combatStep(dt) {
     else if (PAD.connected && PAD.useAim) {
       if (Math.hypot(PAD.rx, PAD.ry) > 0.35) p.aim = Math.atan2(PAD.ry, PAD.rx);   // otherwise hold the last aim
     } else p.aim = Math.atan2(mouse.y - p.y, mouse.x - p.x);
+    if (SCARE.lag > 0) p.aim = SCARE.lagAim; else SCARE.lagAim = p.aim;   // "MY TURN"
   }
   const boost = (slowed ? 1.6 : 1) * S.moveMul * (S.redmist && G.lives === 1 ? 1.3 : 1);
   if (p.dashT > 0) { p.dashT -= dt; if ((G.t * 60 | 0) % 2 === 0) G.ghosts.push({x: p.x, y: p.y, t: 0.22}); }
@@ -151,13 +152,14 @@ function combatStep(dt) {
 
     if (f.type === "armor") f.plate += dt * 1.05 * f.orbit;
     else if (f.type === "warden") f.plate += dt * (f.p2 ? 1.25 : 0.62) * f.orbit;
+    else if (f.type === "unit0417") f.plate += dt * 0.5 * f.orbit;
     else if (f.type === "furnace") {
       const d = ((f.ang - f.plate + Math.PI * 3) % TAU) - Math.PI;
       const tr = f.p2 ? 1.35 : 0.9;
       f.plate += clamp(d, -tr * dt, tr * dt);
-    } else if (f.type === "echo" || f.type === "mirror" || f.type === "milo") {
+    } else if (f.type === "echo" || f.type === "mirror" || f.type === "milo" || f.type === "unit0417") {
       const d = ((f.ang - f.shAng + Math.PI * 3) % TAU) - Math.PI;
-      const turn = f.type === "mirror" ? 2.5 : f.type === "milo" ? (f.p2 ? 3 : 2.4) : f.p2 ? 3.2 : 2.1;
+      const turn = f.type === "mirror" ? 2.5 : f.type === "milo" ? (f.p2 ? 3 : 2.4) : f.type === "unit0417" ? (f.p2 ? 2.8 : 2) : f.p2 ? 3.2 : 2.1;
       f.shAng += clamp(d, -turn * dt, turn * dt);
     } else if (f.type === "shielder") {
       let best = null, bd = 90;
@@ -168,6 +170,7 @@ function combatStep(dt) {
       f.link = best;
     }
     if (f.type === "milo") miloStep(f, p, dt);
+    if (f.type === "unit0417") unitStep(f, p, dt);
     if (base.boss && !f.p2 && f.born > 1.4 && f.hp <= f.maxhp * 0.5 && G.mode !== "attract") enterPhase2(f);
     if (f.type === "mine") {
       if (f.born > 0.8 && dist < 20 && f.fuse > 0.35) f.fuse = 0.35;
@@ -191,7 +194,7 @@ function combatStep(dt) {
       let tvy = dy / dist * radial + ( dx / dist) * spd * f.orbit;
       const cap = spd * 2.1, ts = Math.hypot(tvx, tvy);
       if (ts > cap) { tvx = tvx / ts * cap; tvy = tvy / ts * cap; }
-      if (f.type === "milo" && f.p2 && f.born > 1.4) {
+      if ((f.type === "milo" || f.type === "unit0417") && f.p2 && f.born > 1.4) {
         // player 2: stands where your reflection would be
         const mx = clamp(2 * ACX - p.x, AX0 + 14, AX1 - 14), my = clamp(2 * ACY - p.y, AY0 + 14, AY1 - 14);
         tvx = clamp((mx - f.x) * 2.2, -150, 150); tvy = clamp((my - f.y) * 2.2, -150, 150);
@@ -295,13 +298,14 @@ function combatStep(dt) {
           parry(b, ang, S.perfectAll || pd <= S.perfectD); continue;
         }
       }
+      if (pd < p.r + b.r && b.phantom) { G.bullets.splice(i, 1); burst(b.x, b.y, 6, C.pl, 60, 0.3); whisper("MISSED ME", {x: p.x, y: p.y - 22, life: 1.4}); continue; }
       if (G.mode !== "attract" && p.inv <= 0 && pd < p.r + b.r) { G.bullets.splice(i, 1); hurt(); continue; }
     } else {
       for (let j = G.foes.length - 1; j >= 0; j--) {
         const f = G.foes[j];
         if (Math.hypot(b.x - f.x, b.y - f.y) >= f.r + b.r) continue;
         const hitAng = Math.atan2(b.y - f.y, b.x - f.x);
-        if ((f.type === "echo" || (f.type === "milo" && !(f.guardT > 0))) && f.born > 1.4 && angDiff(hitAng, f.shAng) < 1.0) {
+        if ((f.type === "echo" || ((f.type === "milo" || f.type === "unit0417") && !(f.guardT > 0))) && f.born > 1.4 && angDiff(hitAng, f.shAng) < 1.0) {
           // ECHO returns your shot
           b.friend = false;
           const a = Math.atan2(p.y - f.y, p.x - f.x) + (rand() - 0.5) * 0.18;
@@ -309,7 +313,7 @@ function combatStep(dt) {
           b.vx = Math.cos(a) * s; b.vy = Math.sin(a) * s;
           b.x = f.x + Math.cos(a) * (f.r + 8); b.y = f.y + Math.sin(a) * (f.r + 8);
           b.rally++; b.life = 6; b.fast = true; b.r = 2; b.seek = 0;
-          floatTxt(f.x, f.y - 14, f.type === "milo" ? "HE CATCHES IT" : b.rally > 2 ? "RALLY " + b.rally : "RETURNED", f.type === "milo" ? C.lg : C.pk);
+          floatTxt(f.x, f.y - 14, f.type === "milo" ? "HE CATCHES IT" : f.type === "unit0417" ? "IT CATCHES IT" : b.rally > 2 ? "RALLY " + b.rally : "RETURNED", f.type === "milo" ? C.lg : f.type === "unit0417" ? C.bl : C.pk);
           burst(b.x, b.y, 8, C.pk, 90, 0.3); sfx.clank();
           break;
         }
@@ -466,6 +470,7 @@ function foeFire(f, dt, diff) {
       sfx.snipe();
       break;
     }
+    case "unit0417": unitFire(f, diff); break;
     case "echo":
       f.stage++;
       if (f.hp < f.maxhp / 2 && f.stage % 3 === 0) for (let j = 0; j < 10; j++) fire(f, j / 10 * TAU + f.stage, 70, 2);

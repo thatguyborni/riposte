@@ -38,6 +38,8 @@ function drawFoe(f) {
       P(f.x + ex + Math.round(Math.cos(f.ang)), f.y + ey + Math.round(Math.sin(f.ang)), C.k);
     }
     R(f.x - 4, f.y + 4, 9, 1, C.k);
+  } else if (f.type === "unit0417") {
+    drawUnit0417(f, fl);
   } else if (f.type === "milo") {
     drawSpr(SPR.milo, f.x, f.y, fl, 2);
     const down = f.guardT > 0;
@@ -109,6 +111,7 @@ function drawPlayer() {
     }
   }
   if (p.pulseCd <= 0 && G.mode !== "attract" && Math.floor(G.t * 3) % 2) ringDots(p.x, p.y, 20, C.bl, 5);
+  if (!blink) drawCatchHelper();
 }
 
 function drawCombat(opts) {
@@ -175,7 +178,7 @@ function drawHud() {
   R(0, 0, W, 15, C.k); R(0, 14, W, 1, G.pal.grid);
   let x = 12;   // kept clear of the tube's curved corners
   if (G.mode === "arcade") {
-    txt("SCORE", x, 2, C.gy); txt(String(G.score).padStart(7, "0"), x, 8, C.wh); x += 34;
+    txt(scareHud("SCORE"), x, 2, C.gy); txt(scareHud(String(G.score).padStart(7, "0")), x, 8, C.wh); x += 34;
     txt("WAVE", x, 2, C.gy); txt(String(G.wave), x, 8, C.wh); x += 22;
   } else if (G.mode === "run") {
     txt("COINS", x, 2, C.gy); txt("$" + (run.coins + Math.round(G.coinsGot * G.S.coinMul)), x, 8, C.ye); x += 30;

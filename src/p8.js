@@ -185,7 +185,7 @@ const RunFight = {
     G.bulletMul = cm.bullet; G.fireMul = cm.fire;
     G.touch = lastPointerTouch;
     G.dark = run.depth === 5;
-    music(run.depth === 5 ? (kind === "boss" ? "milo" : "basement") : kind === "boss" ? "boss" : run.depth === 4 ? "signal" : "fight");
+    music(run.depth === 6 ? (kind === "boss" ? "unit" : "lantern") : run.depth === 5 ? (kind === "boss" ? "milo" : "basement") : kind === "boss" ? "boss" : run.depth === 4 ? "signal" : "fight");
     if (new Date().getHours() === 3) unlockAch("witching");
     if (G.dark && !(meta.flags && meta.flags.darkTip)) { if (!meta.flags) meta.flags = {}; meta.flags.darkTip = 1; setTimeout(() => toast("THE LIGHTS DON'T WORK DOWN HERE. SHOTS STILL GLOW.", C.lg), 600); }
     if (kind === "elite") banner("ELITE", C.or, 1.2);
@@ -208,6 +208,7 @@ function fightEnd(res, n) {
   meta.stats.kills += G.kills; meta.stats.perfects += G.perfects;
   if (!res.win) return go(RunOver, endRun("dead"));
   run.fights++;
+  if (run.lantern) { meta.stats.lanternRooms = (meta.stats.lanternRooms || 0) + 1; checkLore(); }
   if ((G.moved || 0) < 120 && G.kills >= 4 && !(meta.flags && meta.flags.still)) { if (!meta.flags) meta.flags = {}; meta.flags.still = 1; }
   if (G.perfects >= 10 && !meta.shields.mirror) {
     meta.shields.mirror = true; meta.secrets.mirror = true; sfx.secret();
@@ -228,7 +229,7 @@ function fightEnd(res, n) {
     const node = nodeById(run.pendingId); if (node) { node.visited = true; run.curId = node.id; }
     run.pendingId = null;
     checkTapes();
-    return go(run.depth === 5 ? MiloEnding : DepthClear);
+    return go(run.depth === 6 ? LanternEnding : run.depth === 5 ? MiloEnding : DepthClear);
   }
   go(RewardScene, {kind: n.type});
 }
@@ -445,10 +446,13 @@ const RunOver = {
   draw() {
     const s = this.s;
     menuBg(s.kind === "true" ? PALS.signal : PALS.grid);
-    const head = {dead: ["SIGNAL LOST", C.rd], win: ["ASCENDED", C.li], true: ["TRUE ENDING", C.pk], free: ["LAID TO REST", C.bl], stay: ["HIGH SCORE", C.rd]}[s.kind];
+    const head = {dead: ["SIGNAL LOST", C.rd], win: ["ASCENDED", C.li], true: ["TRUE ENDING", C.pk], free: ["LAID TO REST", C.bl], stay: ["HIGH SCORE", C.rd],
+      chip: ["UNPLUGGED", C.bl], kept: ["STILL COUNTING", C.rd]}[s.kind];
     title(head[0], 22, head[1]);
     if (s.kind === "free") wrap("HE WENT HOME. THE CABINET IS QUIET NOW. SOMETIMES, IF YOU PLAY LATE, YOU CAN STILL HEAR SOMEONE CHEERING.", 300).forEach((l, i) => txt(l, W / 2, 44 + i * 8, C.lg, 1, "c"));
     if (s.kind === "stay") wrap("THE TABLE WILL ALWAYS SAY " + (meta.initials || "YOU") + ". SOMEONE NEW WILL COME ALONG. THEY ALWAYS DO.", 300).forEach((l, i) => txt(l, W / 2, 44 + i * 8, C.pl, 1, "c"));
+    if (s.kind === "chip") wrap("THE CHIP IS IN YOUR POCKET. THE CABINET STILL PLAYS. IT JUST DOESN'T WATCH ANY MORE.", 300).forEach((l, i) => txt(l, W / 2, 44 + i * 8, C.bl, 1, "c"));
+    if (s.kind === "kept") wrap("YOU LEFT IT IN. IT WILL BE VERY GOOD TO YOU FROM NOW ON.", 300).forEach((l, i) => txt(l, W / 2, 44 + i * 8, C.rd, 1, "c"));
     if (s.kind === "true") wrap("ECHO WAS NEVER AN ENEMY. IT WAS EVERY SHOT YOU EVER SENT BACK, FINALLY ANSWERING.", 300).forEach((l, i) => txt(l, W / 2, 44 + i * 8, C.lg, 1, "c"));
     const rows = [["DEPTH REACHED", s.depth], ["FOES DOWN", s.kills], ["PERFECTS", s.perfects], ["GUARDIANS", s.bosses]];
     rows.forEach((r, i) => { txt(r[0], 70, 66 + i * 10, C.gy); txt(String(r[1]), 170, 66 + i * 10, C.wh, 1, "r"); });

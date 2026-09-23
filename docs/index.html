@@ -113,7 +113,7 @@ const GJ_CFG = {
   }
 };
 "use strict";
-const VERSION = "4.7.0";
+const VERSION = "4.8.0";
 /* ================================================================
    RIPOSTE v3 — core: screen, font, sprites, audio, save
    ================================================================ */
@@ -614,6 +614,7 @@ function buildSprites() {
   SPR.i_shop = mkSprite(["...y...",".yyyyy.","yy.y...",".yyyyy.","...y.yy",".yyyyy.","...y..."], {y:C.ye});
   SPR.i_event = mkSprite([".lllll.","ll...ll",".....ll","...lll.","...l...",".......","...l..."], {l:C.la});
   if (typeof buildHorrorSprites === "function") buildHorrorSprites();
+  if (typeof buildLanternSprites === "function") buildLanternSprites();
   SPR.i_altar = mkSprite(["...p...","..ppp..","...p...",".lllll.","..lpl..","..lll..",".lllll."], {p:C.pk, l:C.la});
   SPR.i_vault = mkSprite(["...w...","..wpw..",".wpppw.","wpp@ppw",".wpppw.","..wpw..","...w..."], {w:C.wh, p:C.pk, "@":C.wh});
 }
@@ -711,6 +712,8 @@ const MUSIC = {
 let musTrack = null, musNext = 0, musStep = 0;
 const mtof = n => 440 * Math.pow(2, (n - 69) / 12);
 function music(name) {
+  // the director takes the sound away for a few seconds; anything asking for music meanwhile just queues it
+  if (typeof SCARE !== "undefined" && SCARE.hush > 0) { SCARE.hushTrack = name; return; }
   if (name === "title" && typeof haunted === "function" && isNight() && haunted(2)) name = "titleNight";
   if (musTrack === name) return;
   musTrack = name; musStep = 0;
@@ -745,15 +748,15 @@ function freshMeta() {
     secrets: {vault1:false, vault2:false, vault3:false, untouched:false, static:false, mirror:false, signal:false, echo:false},
     stats: {runs:0, wins:0, bestDepth:0, kills:0, perfects:0, trueEnd:0, mines:0, bestWave:0,
       arcadeGames:0, dailies:0, bestScore:0, bestScoreWave:0, activeTime:0, bestRun:null,
-      catches:0, catchL:0, catchR:0, sessions:0, basements:0},
+      catches:0, catchL:0, catchR:0, sessions:0, basements:0, lanternRooms:0},
     arcade: [], initials: "AAA", name: "", pid: "", sent: {}, saveT: 0, cloud: {},
     seen: {}, ach: {}, history: [], npcs: {}, asc: 0, daily: null, dailyBest: 0, dailyFriends: [],
     synSeen: {}, modsSeen: {}, tutorialDone: false, hubSeen: false, gj: null, migr4: false,
     logs: {}, tapesDue: {}, flags: {}, playTime: 0, hauntSeen: false, milo: "",
-    lore: {}, loreDue: {}, hrs: new Array(24).fill(0), firstSeen: 0,
+    lore: {}, loreDue: {}, hrs: new Array(24).fill(0), firstSeen: 0, nights: 0, echoEnd: "",
     settings: {sound: 2, crt: true, fullscreen: false, vol: 8, musVol: 8, sfxVol: 8, curve: 2, tint: 0,
       phosphor: true, shake: true, effects: 2, rumble: true, haunt: 2,
-      taim: 0, tsize: 1, tfs: true, diff: 2}
+      taim: 0, tsize: 1, tfs: true, diff: 2, helper: 1}
   };
 }
 function mergeDeep(base, over) {
@@ -1313,6 +1316,7 @@ function combatStep(dt) {
     else if (PAD.connected && PAD.useAim) {
       if (Math.hypot(PAD.rx, PAD.ry) > 0.35) p.aim = Math.atan2(PAD.ry, PAD.rx);   // otherwise hold the last aim
     } else p.aim = Math.atan2(mouse.y - p.y, mouse.x - p.x);
+    if (SCARE.lag > 0) p.aim = SCARE.lagAim; else SCARE.lagAim = p.aim;   // "MY TURN"
   }
   const boost = (slowed ? 1.6 : 1) * S.moveMul * (S.redmist && G.lives === 1 ? 1.3 : 1);
   if (p.dashT > 0) { p.dashT -= dt; if ((G.t * 60 | 0) % 2 === 0) G.ghosts.push({x: p.x, y: p.y, t: 0.22}); }
@@ -1357,13 +1361,14 @@ function combatStep(dt) {
 
     if (f.type === "armor") f.plate += dt * 1.05 * f.orbit;
     else if (f.type === "warden") f.plate += dt * (f.p2 ? 1.25 : 0.62) * f.orbit;
+    else if (f.type === "unit0417") f.plate += dt * 0.5 * f.orbit;
     else if (f.type === "furnace") {
       const d = ((f.ang - f.plate + Math.PI * 3) % TAU) - Math.PI;
       const tr = f.p2 ? 1.35 : 0.9;
       f.plate += clamp(d, -tr * dt, tr * dt);
-    } else if (f.type === "echo" || f.type === "mirror" || f.type === "milo") {
+    } else if (f.type === "echo" || f.type === "mirror" || f.type === "milo" || f.type === "unit0417") {
       const d = ((f.ang - f.shAng + Math.PI * 3) % TAU) - Math.PI;
-      const turn = f.type === "mirror" ? 2.5 : f.type === "milo" ? (f.p2 ? 3 : 2.4) : f.p2 ? 3.2 : 2.1;
+      const turn = f.type === "mirror" ? 2.5 : f.type === "milo" ? (f.p2 ? 3 : 2.4) : f.type === "unit0417" ? (f.p2 ? 2.8 : 2) : f.p2 ? 3.2 : 2.1;
       f.shAng += clamp(d, -turn * dt, turn * dt);
     } else if (f.type === "shielder") {
       let best = null, bd = 90;
@@ -1374,6 +1379,7 @@ function combatStep(dt) {
       f.link = best;
     }
     if (f.type === "milo") miloStep(f, p, dt);
+    if (f.type === "unit0417") unitStep(f, p, dt);
     if (base.boss && !f.p2 && f.born > 1.4 && f.hp <= f.maxhp * 0.5 && G.mode !== "attract") enterPhase2(f);
     if (f.type === "mine") {
       if (f.born > 0.8 && dist < 20 && f.fuse > 0.35) f.fuse = 0.35;
@@ -1397,7 +1403,7 @@ function combatStep(dt) {
       let tvy = dy / dist * radial + ( dx / dist) * spd * f.orbit;
       const cap = spd * 2.1, ts = Math.hypot(tvx, tvy);
       if (ts > cap) { tvx = tvx / ts * cap; tvy = tvy / ts * cap; }
-      if (f.type === "milo" && f.p2 && f.born > 1.4) {
+      if ((f.type === "milo" || f.type === "unit0417") && f.p2 && f.born > 1.4) {
         // player 2: stands where your reflection would be
         const mx = clamp(2 * ACX - p.x, AX0 + 14, AX1 - 14), my = clamp(2 * ACY - p.y, AY0 + 14, AY1 - 14);
         tvx = clamp((mx - f.x) * 2.2, -150, 150); tvy = clamp((my - f.y) * 2.2, -150, 150);
@@ -1501,13 +1507,14 @@ function combatStep(dt) {
           parry(b, ang, S.perfectAll || pd <= S.perfectD); continue;
         }
       }
+      if (pd < p.r + b.r && b.phantom) { G.bullets.splice(i, 1); burst(b.x, b.y, 6, C.pl, 60, 0.3); whisper("MISSED ME", {x: p.x, y: p.y - 22, life: 1.4}); continue; }
       if (G.mode !== "attract" && p.inv <= 0 && pd < p.r + b.r) { G.bullets.splice(i, 1); hurt(); continue; }
     } else {
       for (let j = G.foes.length - 1; j >= 0; j--) {
         const f = G.foes[j];
         if (Math.hypot(b.x - f.x, b.y - f.y) >= f.r + b.r) continue;
         const hitAng = Math.atan2(b.y - f.y, b.x - f.x);
-        if ((f.type === "echo" || (f.type === "milo" && !(f.guardT > 0))) && f.born > 1.4 && angDiff(hitAng, f.shAng) < 1.0) {
+        if ((f.type === "echo" || ((f.type === "milo" || f.type === "unit0417") && !(f.guardT > 0))) && f.born > 1.4 && angDiff(hitAng, f.shAng) < 1.0) {
           // ECHO returns your shot
           b.friend = false;
           const a = Math.atan2(p.y - f.y, p.x - f.x) + (rand() - 0.5) * 0.18;
@@ -1515,7 +1522,7 @@ function combatStep(dt) {
           b.vx = Math.cos(a) * s; b.vy = Math.sin(a) * s;
           b.x = f.x + Math.cos(a) * (f.r + 8); b.y = f.y + Math.sin(a) * (f.r + 8);
           b.rally++; b.life = 6; b.fast = true; b.r = 2; b.seek = 0;
-          floatTxt(f.x, f.y - 14, f.type === "milo" ? "HE CATCHES IT" : b.rally > 2 ? "RALLY " + b.rally : "RETURNED", f.type === "milo" ? C.lg : C.pk);
+          floatTxt(f.x, f.y - 14, f.type === "milo" ? "HE CATCHES IT" : f.type === "unit0417" ? "IT CATCHES IT" : b.rally > 2 ? "RALLY " + b.rally : "RETURNED", f.type === "milo" ? C.lg : f.type === "unit0417" ? C.bl : C.pk);
           burst(b.x, b.y, 8, C.pk, 90, 0.3); sfx.clank();
           break;
         }
@@ -1672,6 +1679,7 @@ function foeFire(f, dt, diff) {
       sfx.snipe();
       break;
     }
+    case "unit0417": unitFire(f, diff); break;
     case "echo":
       f.stage++;
       if (f.hp < f.maxhp / 2 && f.stage % 3 === 0) for (let j = 0; j < 10; j++) fire(f, j / 10 * TAU + f.stage, 70, 2);
@@ -1721,6 +1729,8 @@ function drawFoe(f) {
       P(f.x + ex + Math.round(Math.cos(f.ang)), f.y + ey + Math.round(Math.sin(f.ang)), C.k);
     }
     R(f.x - 4, f.y + 4, 9, 1, C.k);
+  } else if (f.type === "unit0417") {
+    drawUnit0417(f, fl);
   } else if (f.type === "milo") {
     drawSpr(SPR.milo, f.x, f.y, fl, 2);
     const down = f.guardT > 0;
@@ -1792,6 +1802,7 @@ function drawPlayer() {
     }
   }
   if (p.pulseCd <= 0 && G.mode !== "attract" && Math.floor(G.t * 3) % 2) ringDots(p.x, p.y, 20, C.bl, 5);
+  if (!blink) drawCatchHelper();
 }
 
 function drawCombat(opts) {
@@ -1858,7 +1869,7 @@ function drawHud() {
   R(0, 0, W, 15, C.k); R(0, 14, W, 1, G.pal.grid);
   let x = 12;   // kept clear of the tube's curved corners
   if (G.mode === "arcade") {
-    txt("SCORE", x, 2, C.gy); txt(String(G.score).padStart(7, "0"), x, 8, C.wh); x += 34;
+    txt(scareHud("SCORE"), x, 2, C.gy); txt(scareHud(String(G.score).padStart(7, "0")), x, 8, C.wh); x += 34;
     txt("WAVE", x, 2, C.gy); txt(String(G.wave), x, 8, C.wh); x += 22;
   } else if (G.mode === "run") {
     txt("COINS", x, 2, C.gy); txt("$" + (run.coins + Math.round(G.coinsGot * G.S.coinMul)), x, 8, C.ye); x += 30;
@@ -2221,7 +2232,7 @@ function loadRun() {
   } catch (e) { return null; }
 }
 function hurtRun(n) { run.lives = Math.max(0, run.lives - n); }
-function depthDiff(depth, layer) { if (depth === 5) return 1.22 + (layer || 0) * 0.03; return 1 + (depth - 1) * 0.16 + (layer || 0) * 0.025; }
+function depthDiff(depth, layer) { if (depth === 6) return 1.3 + (layer || 0) * 0.03; if (depth === 5) return 1.22 + (layer || 0) * 0.03; return 1 + (depth - 1) * 0.16 + (layer || 0) * 0.025; }
 const npcHere = id => !!(meta.npcs && meta.npcs[id]);
 function runWaves(depth, layer, kind) {
   const pools = [null,
@@ -2229,9 +2240,10 @@ function runWaves(depth, layer, kind) {
     ["sentry", "spreader", "sniper", "armor", "rusher", "shielder", "miner"],
     ["spreader", "sniper", "armor", "rusher", "splitter", "sentry", "shielder", "miner", "mirror"],
     ["sentry", "spreader", "sniper", "armor", "rusher", "splitter", "mirror", "shielder", "miner"],
-    ["hollow", "mimic", "sentry", "spreader", "hollow", "mimic", "armor", "sentry"]];
+    ["hollow", "mimic", "sentry", "spreader", "hollow", "mimic", "armor", "sentry"],
+    typeof LANTERN_POOL !== "undefined" ? LANTERN_POOL : ["armor", "mirror", "sentry"]];
   const pool = pools[depth];
-  const dN = depth === 5 ? 2 : depth;
+  const dN = depth === 5 ? 2 : depth === 6 ? 3 : depth;
   const nW = kind === "elite" ? 3 : 2;
   const out = [];
   for (let w = 0; w < nW; w++) {
@@ -2247,12 +2259,13 @@ const BOSS_FOR = [null, "warden", "furnace", "hydra", "echo"];
 
 function endRun(kind) {
   const glass = run.shield === "glass";
-  const won = kind === "win" || kind === "true" || kind === "free" || kind === "stay";
+  const won = kind === "win" || kind === "true" || kind === "free" || kind === "stay" || kind === "chip" || kind === "kept";
   if (kind === "dead" && (run.basement || run.depth === 5)) { if (!meta.flags) meta.flags = {}; meta.flags.miloLoss = 1; }
   let t = run.bank + Math.floor(run.kills * 0.5) + Math.floor(run.perfects * 0.3);
   if (kind === "win") t += 60;
   if (kind === "true") t += 150;
   if (kind === "free" || kind === "stay") t += 200;
+  if (kind === "chip" || kind === "kept") t += 300;
   if (glass) t *= 2;
   const nCurse = (run.curses || []).length;
   t *= (1 + 0.15 * nCurse) * (1 + 0.2 * (run.asc || 0));
@@ -2437,7 +2450,7 @@ function seedAttract() {
 }
 let lastInput = 0;
 const TitleScene = {
-  enter() { seedAttract(); music("title"); this.saved = loadRun(); lastInput = T; this.demo = false; hubReturn = false; checkTapes(); },
+  enter() { seedAttract(); music("title"); this.saved = loadRun(); lastInput = T; this.demo = false; hubReturn = false; checkTapes(); saveNudge(); },
   update(dt) {
     combatTick(dt);
     const idle = T - lastInput > 25;
@@ -2509,6 +2522,13 @@ const TitleScene = {
     y += gap;
     btn(this, "SETTINGS", bx, y, bw, 12, () => go(SettingsScene), {col: C.lg, dim: C.nv}); y += gap;
     if (window.rpQuit) btn(this, "QUIT", bx, y, bw, 12, powerOff, {col: C.gy, dim: C.nv});
+    if (SCARE.menuExtra > 0) {
+      y += gap;
+      btn(this, "CONTINUE (PLAYER 2)", bx, y, bw, 12, () => {
+        SCARE.menuExtra = 0; stinger(); hauntFace(0.5, true);
+        setTimeout(() => whisper("NOT YET", {big: true, x: W / 2, y: 120, life: 2.4}), 300);
+      }, {col: C.rd, dim: C.pl});
+    }
     endItems(this);
     if (!meta.tutorialDone && !meta.stats.runs && !meta.arcade.length && Math.floor(T * 2) % 2) txt("< NEW? TRAINING IS IN HERE", bx + bw + 6, tutY + 4, C.bl);
 
@@ -2520,6 +2540,8 @@ const TitleScene = {
     txt("DEEPEST", 12, 156, C.gy); txt(meta.stats.bestDepth ? "DEPTH " + meta.stats.bestDepth : "-", 12, 163, C.wh);
     if (allFragments() && !meta.secrets.echo && Math.floor(T * 2) % 2) txt("THE SIGNAL IS COMPLETE", W / 2, 206, C.pk, 1, "c");
     txt("TROPHIES", 12, 178, C.gy); txt(achCount() + "/" + ACH.length, 12, 185, C.ye);
+    const sh = saveHome();
+    txt("SAVE", W - 12, 90, C.gy, 1, "r"); txt(sh[0], W - 12, 97, sh[1], 1, "r");
     const DD = DIFFS[diffLevel()];
     txt("DIFFICULTY", 12, 200, C.gy); txt(DD.n, 12, 207, DD.col);
     txt(ctl("WASD MOVE  ~  MOUSE AIM  ~  SPACE PULSE  ~  SHIFT DASH", "L-STICK MOVE  ~  R-STICK AIM  ~  RT PULSE  ~  LT DASH", "LEFT THUMB MOVES  ~  RIGHT THUMB AIMS  ~  PULSE / DASH BUTTONS"), W / 2, 224, C.gy, 1, "c");
@@ -2592,7 +2614,8 @@ const ArcadeOver = {
   back() { go(TitleScene); },
   enter() {
     const D = DIFFS[G.dl != null ? G.dl : DIFF_NORMAL];
-    this.res = {score: Math.round(G.score * D.score), raw: G.score, dl: G.dl != null ? G.dl : DIFF_NORMAL, wave: G.wave, chain: G.bestChain, perf: G.perfects}; music("map");
+    this.res = {score: Math.round(G.score * D.score), raw: G.score, dl: G.dl != null ? G.dl : DIFF_NORMAL, wave: G.wave, chain: G.bestChain,
+      perf: G.perfects, caught: G.parries || 0, rate: perfRate(G.perfects, G.parries || 0)}; music("map");
     const ph = phantomEntry();
     if (ph && !ph.ghost2 && this.res.score > ph.s && meta.milo !== "stay" && haunted(2)) setTimeout(() => whisper("HE DIDN'T LIKE THAT"), 1200);
     const r = this.res;
@@ -2621,8 +2644,8 @@ const ArcadeOver = {
     title("GAME OVER", 40, C.rd);
     const r = this.res;
     const D = DIFFS[r.dl];
-    const rows = r.dl === DIFF_NORMAL ? [["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain], ["PERFECTS", r.perf]]
-      : [["POINTS", r.raw], [D.n, scoreMulText(D)], ["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain]];
+    const rows = r.dl === DIFF_NORMAL ? [["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain], ["CAUGHT", r.caught], ["PERFECT", r.perf + "  (" + r.rate + "%)"]]
+      : [["POINTS", r.raw], [D.n, scoreMulText(D)], ["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain], ["PERFECT", r.perf + "  (" + r.rate + "%)"]];
     rows.forEach((row, i) => { txt(row[0], W / 2 - 60, 74 + i * 12, C.gy); txt(String(row[1]), W / 2 + 60, 74 + i * 12, C.wh, 1, "r"); });
     txt("PLAYER: " + (typeof myName === "function" ? myName() : meta.initials), W / 2, 60, C.gy, 1, "c");
     if ((this.newBest || this.entry) && Math.floor(T * 2) % 2) txt(this.newBest ? "NEW PERSONAL BEST!" : "YOU MADE THE TOP 10", W / 2, 130, this.newBest ? C.ye : C.bl, 1, "c");
@@ -2632,7 +2655,10 @@ const ArcadeOver = {
     btn(this, "PLAY AGAIN", W / 2 - 50, y, 100, 12, () => go(ArcadeScene)); y += 15;
     btn(this, "TITLE", W / 2 - 50, y, 100, 12, () => go(TitleScene), {col: C.gy});
     endItems(this);
-    txt(pick0(TIPS_ARCADE, Math.floor(r.score / 7)), W / 2, 206, C.la, 1, "c");
+    // the thing most new players never find: catching late
+    if (r.caught >= 12 && r.rate < 12) wrap("CATCH LATE. LET THE SHOT ALMOST TOUCH YOU, THEN SNAP THE SHIELD ONTO IT: A PERFECT FLIES BACK TWICE AS FAST AND KEEPS YOUR CHAIN ALIVE.", 330)
+      .forEach((l, i) => txt(l, W / 2, 198 + i * 8, C.ye, 1, "c"));
+    else txt(pick0(TIPS_ARCADE, Math.floor(r.score / 7)), W / 2, 206, C.la, 1, "c");
   }
 };
 const TIPS_ARCADE = ["CATCH LATE, ON THE INNER LINE, FOR A PERFECT.", "A KILLING SHOT KEEPS GOING. LINE THEM UP.",
@@ -2902,7 +2928,7 @@ const RunFight = {
     G.bulletMul = cm.bullet; G.fireMul = cm.fire;
     G.touch = lastPointerTouch;
     G.dark = run.depth === 5;
-    music(run.depth === 5 ? (kind === "boss" ? "milo" : "basement") : kind === "boss" ? "boss" : run.depth === 4 ? "signal" : "fight");
+    music(run.depth === 6 ? (kind === "boss" ? "unit" : "lantern") : run.depth === 5 ? (kind === "boss" ? "milo" : "basement") : kind === "boss" ? "boss" : run.depth === 4 ? "signal" : "fight");
     if (new Date().getHours() === 3) unlockAch("witching");
     if (G.dark && !(meta.flags && meta.flags.darkTip)) { if (!meta.flags) meta.flags = {}; meta.flags.darkTip = 1; setTimeout(() => toast("THE LIGHTS DON'T WORK DOWN HERE. SHOTS STILL GLOW.", C.lg), 600); }
     if (kind === "elite") banner("ELITE", C.or, 1.2);
@@ -2925,6 +2951,7 @@ function fightEnd(res, n) {
   meta.stats.kills += G.kills; meta.stats.perfects += G.perfects;
   if (!res.win) return go(RunOver, endRun("dead"));
   run.fights++;
+  if (run.lantern) { meta.stats.lanternRooms = (meta.stats.lanternRooms || 0) + 1; checkLore(); }
   if ((G.moved || 0) < 120 && G.kills >= 4 && !(meta.flags && meta.flags.still)) { if (!meta.flags) meta.flags = {}; meta.flags.still = 1; }
   if (G.perfects >= 10 && !meta.shields.mirror) {
     meta.shields.mirror = true; meta.secrets.mirror = true; sfx.secret();
@@ -2945,7 +2972,7 @@ function fightEnd(res, n) {
     const node = nodeById(run.pendingId); if (node) { node.visited = true; run.curId = node.id; }
     run.pendingId = null;
     checkTapes();
-    return go(run.depth === 5 ? MiloEnding : DepthClear);
+    return go(run.depth === 6 ? LanternEnding : run.depth === 5 ? MiloEnding : DepthClear);
   }
   go(RewardScene, {kind: n.type});
 }
@@ -3162,10 +3189,13 @@ const RunOver = {
   draw() {
     const s = this.s;
     menuBg(s.kind === "true" ? PALS.signal : PALS.grid);
-    const head = {dead: ["SIGNAL LOST", C.rd], win: ["ASCENDED", C.li], true: ["TRUE ENDING", C.pk], free: ["LAID TO REST", C.bl], stay: ["HIGH SCORE", C.rd]}[s.kind];
+    const head = {dead: ["SIGNAL LOST", C.rd], win: ["ASCENDED", C.li], true: ["TRUE ENDING", C.pk], free: ["LAID TO REST", C.bl], stay: ["HIGH SCORE", C.rd],
+      chip: ["UNPLUGGED", C.bl], kept: ["STILL COUNTING", C.rd]}[s.kind];
     title(head[0], 22, head[1]);
     if (s.kind === "free") wrap("HE WENT HOME. THE CABINET IS QUIET NOW. SOMETIMES, IF YOU PLAY LATE, YOU CAN STILL HEAR SOMEONE CHEERING.", 300).forEach((l, i) => txt(l, W / 2, 44 + i * 8, C.lg, 1, "c"));
     if (s.kind === "stay") wrap("THE TABLE WILL ALWAYS SAY " + (meta.initials || "YOU") + ". SOMEONE NEW WILL COME ALONG. THEY ALWAYS DO.", 300).forEach((l, i) => txt(l, W / 2, 44 + i * 8, C.pl, 1, "c"));
+    if (s.kind === "chip") wrap("THE CHIP IS IN YOUR POCKET. THE CABINET STILL PLAYS. IT JUST DOESN'T WATCH ANY MORE.", 300).forEach((l, i) => txt(l, W / 2, 44 + i * 8, C.bl, 1, "c"));
+    if (s.kind === "kept") wrap("YOU LEFT IT IN. IT WILL BE VERY GOOD TO YOU FROM NOW ON.", 300).forEach((l, i) => txt(l, W / 2, 44 + i * 8, C.rd, 1, "c"));
     if (s.kind === "true") wrap("ECHO WAS NEVER AN ENEMY. IT WAS EVERY SHOT YOU EVER SENT BACK, FINALLY ANSWERING.", 300).forEach((l, i) => txt(l, W / 2, 44 + i * 8, C.lg, 1, "c"));
     const rows = [["DEPTH REACHED", s.depth], ["FOES DOWN", s.kills], ["PERFECTS", s.perfects], ["GUARDIANS", s.bosses]];
     rows.forEach((r, i) => { txt(r[0], 70, 66 + i * 10, C.gy); txt(String(r[1]), 170, 66 + i * 10, C.wh, 1, "r"); });
@@ -3280,7 +3310,8 @@ const SETTING_ROWS = [
   {k: "taim",    n: "TOUCH AIM",       type: "opt", opts: ["ASSIST", "MANUAL"], hidden: () => !COARSE},
   {k: "tsize",   n: "TOUCH BUTTONS",   type: "opt", opts: ["SMALL", "NORMAL", "LARGE"], hidden: () => !COARSE},
   {k: "tfs",     n: "AUTO FULLSCREEN", type: "bool", hidden: () => !COARSE || !document.fullscreenEnabled},
-  {k: "haunt",   n: "HAUNTING",        type: "opt", opts: ["OFF", "SUBTLE", "FULL"], hidden: () => !meta.hauntSeen}
+  {k: "helper",  n: "CATCH HELPER",    type: "opt", opts: ["OFF", "UNTIL IT CLICKS", "ALWAYS"]},
+  {k: "haunt",   n: "HAUNTING",        type: "opt", opts: ["OFF", "SUBTLE", "FULL", "TOO MUCH"], hidden: () => !meta.hauntSeen}
 ];
 const visibleSettings = () => SETTING_ROWS.filter(r => !r.hidden || !r.hidden());
 function settingValue(r) {
@@ -3289,6 +3320,7 @@ function settingValue(r) {
   if (r.type === "bool") return v === false ? "OFF" : "ON";
   if (r.type === "lvl") { const n = v == null ? 2 : v; return "[" + "|".repeat(n + 1) + ".".repeat(r.opts.length - n - 1) + "] " + r.opts[n]; }
   if (r.k === "haunt" && v == null) return r.opts[2];
+  if (r.k === "helper" && v == null) return r.opts[1];
   return r.opts[v == null ? 0 : v] || r.opts[0];
 }
 function changeSetting(r, dir) {
@@ -3296,7 +3328,7 @@ function changeSetting(r, dir) {
   if (r.type === "num") s[r.k] = clamp((s[r.k] == null ? 8 : s[r.k]) + dir, r.min, r.max);
   else if (r.type === "lvl") s[r.k] = clamp((s[r.k] == null ? 2 : s[r.k]) + dir, 0, r.opts.length - 1);
   else if (r.type === "bool") s[r.k] = s[r.k] === false;
-  else { const n = r.opts.length, cur = s[r.k] == null ? (r.k === "haunt" ? 2 : 0) : s[r.k]; s[r.k] = ((cur + dir) % n + n) % n; }
+  else { const n = r.opts.length, cur = s[r.k] == null ? (r.k === "haunt" ? 2 : r.k === "helper" ? 1 : 0) : s[r.k]; s[r.k] = ((cur + dir) % n + n) % n; }
   applyVolumes(); saveMeta();
   sfx.move();
   if (r.k === "effects" || r.k === "crt" || r.k === "curve" || r.k === "tint") fxGlitch(0.4);
@@ -3365,9 +3397,9 @@ const TRAIN_STEPS = [
   {t: () => "A SHOT IS COMING. POINT YOUR SHIELD AT IT TO CATCH IT.", setup: g => trainSpawn("sentry", 0.7), done: g => g.parries >= 1},
   {t: () => "CAUGHT SHOTS FLY BACK AND HUNT THE NEAREST ENEMY. THEIR BULLETS ARE YOUR ONLY WEAPON. FINISH IT.",
    setup: g => { if (!g.foes.length) trainSpawn("sentry", 0.7); }, done: g => g.kills >= 1},
-  {t: () => "PERFECT CATCH: KEEP YOUR SHIELD AWAY, THEN CATCH THE SHOT LATE, RIGHT ON THE THIN WHITE INNER LINE.",
-   hint: "WAIT UNTIL IT'S ALMOST TOUCHING YOU, THEN SNAP THE SHIELD ONTO IT.",
-   setup: g => { g.foes = []; g.bullets = []; trainSpawn("sentry", 0.5); }, done: g => g.perfects >= 1},
+  {t: () => "PERFECT CATCH: KEEP THE SHIELD AWAY, LET THE SHOT COME ALL THE WAY IN, THEN SNAP ONTO IT ON THE WHITE INNER LINE. DO IT TWICE.",
+   hint: "TIME SLOWS DOWN WHILE A SHOT IS CLOSE. WAIT FOR THE LINE TO LIGHT UP, THEN TURN.",
+   slow: true, setup: g => { g.foes = []; g.bullets = []; trainSpawn("sentry", 0.5); }, done: g => g.perfects >= 2},
   {t: () => ctl("TOO MUCH COMING AT ONCE? PRESS SPACE TO PULSE. IT CATCHES EVERYTHING CLOSE TO YOU.", "TOO MUCH COMING AT ONCE? PULL RT TO PULSE. IT CATCHES EVERYTHING CLOSE TO YOU.", "TOO MUCH COMING AT ONCE? TAP PULSE. IT CATCHES EVERYTHING CLOSE TO YOU."),
    setup: g => { trainSpawn("spreader", 0.7); trainSpawn("spreader", 0.7); g.p.pulseCd = 0; }, done: g => g.pulses >= 1},
   {t: () => ctl("PRESS SHIFT TO DASH. NOTHING CAN HIT YOU MID-DASH.", "PULL LT (OR PRESS A) TO DASH. NOTHING CAN HIT YOU MID-DASH.", "TAP DASH. NOTHING CAN HIT YOU MID-DASH."), done: g => g.dashes >= 1},
@@ -3410,6 +3442,12 @@ const TrainingScene = {
     G.trainMoved += Math.hypot(p.x - G.lastX, p.y - G.lastY); G.lastX = p.x; G.lastY = p.y;
     let da = Math.abs(((p.aim - G.lastAim + Math.PI * 3) % TAU) - Math.PI); G.trainSwing += da; G.lastAim = p.aim;
     G.lives = 3;
+    // the perfect step: the world slows right down while a shot is in the zone, so the timing is visible
+    const st0 = TRAIN_STEPS[G.step];
+    if (st0 && st0.slow && !G.over) {
+      const close = G.bullets.some(b => !b.friend && Math.hypot(b.x - G.p.x, b.y - G.p.y) < 34 && ((b.x - G.p.x) * b.vx + (b.y - G.p.y) * b.vy) < 0);
+      G.slowT = close ? 0.3 : 0;
+    }
     combatTick(dt);
     G.stepT += dt;
     if (this.done > 0) { this.done -= dt; if (this.done <= 0) go(backTarget()); return; }
@@ -3503,8 +3541,9 @@ function stormZap(b) {
 
 function enterPhase2(f) {
   f.p2 = true;
-  banner(f.type === "echo" ? "IT LEARNS" : f.type === "milo" ? "PLAYER 2" : "PHASE 2", C.rd, 1.5);
+  banner(f.type === "echo" ? "IT LEARNS" : f.type === "milo" || f.type === "unit0417" ? "PLAYER 2" : "PHASE 2", C.rd, 1.5);
   if (f.type === "milo") { loreSetFlag("miloP2"); hauntFace(0.5, true); G.lightsOut = 1.5; whisper("MY TURN", {big: true, x: W / 2, y: 150, life: 2}); }
+  if (f.type === "unit0417") { hauntFace(0.5, true); whisper("PLAYER 2 READY", {big: true, x: W / 2, y: 150, life: 2.2}); music("unit"); }
   fxGlitch(0.85); fxRoll(); fxWobble(0.5); sfxGlitch(true); padRumble(0.8, 0.8, 300);
   G.shake = 6; G.hitstop = Math.max(G.hitstop, 0.14); G.flash = Math.max(G.flash, 0.4);
   // a breath: nearby hostile shots are wiped by the shockwave
@@ -3828,6 +3867,7 @@ const HubScene = {
     const FIG = [[362, 66], [330, 96], [262, 150], [214, 118]];
     this.fig = haunted(2) && meta.flags && meta.flags.crash1 ? FIG[Math.min(3, Math.max(0, h - 2))] : null;
     this.figGone = false; this.lightsT = 8 + rand() * 12; this.dark = 0; this.winT = 6 + rand() * 10; this.winFig = 0; this.p2T = 0;
+    this.tvOn = 0; this.cabOn = 0;
     this.posterName = haunted(4) && scaresOn() && rand() < 0.35;
     music(meta.milo === "free" ? "map" : haunted(3) ? "basement" : "map");
     if (!meta.hubSeen) { meta.hubSeen = true; saveMeta(); this.dialog = {who: null, text: "THE BACK ROOM. " + ctl("WALK UP TO THINGS AND PRESS ENTER.", "WALK UP TO THINGS AND PRESS A.", "DRAG ANYWHERE TO WALK. TAP THINGS (OR PRESS USE) TO USE THEM. THE X IN THE CORNER LEAVES.") + " EVERYTHING BEHIND THE CABINET LIVES HERE."}; }
@@ -3848,6 +3888,10 @@ const HubScene = {
     out.push({id: "cork", n: "CORKBOARD", hint: dueLore("d").length ? "SOMETHING NEW IS PINNED UP" : docs ? docs + " PAPER" + (docs > 1 ? "S" : "") : "EMPTY", x: 355, y: 60, box: [334, 20, 42, 24], act: () => this.useCork()});
     if (dueLore("s").length) out.push({id: "receipt", n: "A RECEIPT", hint: "THE CABINET PRINTED IT BY ITSELF", x: 332, y: 76, box: [327, 58, 8, 16], act: () => go(LoreScene, {id: dueLore("s")[0], from: HubScene})});
     out.push({id: "poster", n: "POSTER", hint: haunted(2) ? "MISSING" : "RIPOSTE", x: 280, y: 60, box: [270, 22, 20, 18], act: () => this.usePoster()});
+    if (lanternOpen()) out.push({id: "crate", n: "THE CRATE", hint: meta.echoEnd ? "EMPTY NOW" : "LANTERN COIN-OP. IT IS STILL WARM.", x: 108, y: 200, box: [96, 196, 24, 18],
+      act: () => this.useCrate()});
+    if (starliteOpen()) out.push({id: "side", n: "THE SIDE DOOR", hint: nightsDone() >= NIGHT_COUNT ? "IT ONLY GOES TO AN EMPTY LOT NOW" : "IT SMELLS LIKE 1989 THROUGH THERE",
+      x: 26, y: 104, box: [8, 82, 16, 30], act: () => go(nightsDone() >= NIGHT_COUNT ? LotScene : StarliteScene)});
     if (basementOpen()) out.push({id: "trap", n: "TRAPDOOR", hint: meta.milo === "free" ? "IT'S QUIET DOWN THERE NOW" : "IT GOES DOWN", x: 300, y: 196, box: [288, 186, 24, 16], act: () => this.enterBasement()});
     if (meta.milo === "free") out.push({id: "milo", n: "MILO", hint: "THE LAST PLAYER", x: 282, y: 124, box: [277, 112, 10, 14], act: () => this.talkMilo()});
     for (const n of NPCS) if (npcHere(n.id)) {
@@ -3855,6 +3899,14 @@ const HubScene = {
       out.push({id: n.id, n: n.n, hint: n.role, x, y: y + 4, box: [x - 5, y - 6, 10, 14], npc: n, act: () => this.talk(n)});
     }
     return out;
+  },
+  useCrate() {
+    if (meta.echoEnd) { this.dialog = {who: null, text: "AN EMPTY WOODEN CRATE WITH A STENCIL ON THE SIDE. THE STRAW INSIDE IS STILL PRESSED INTO THE SHAPE OF SOMETHING."}; return; }
+    const r = loadRun();
+    if (r && !r.lantern) { this.dialog = {who: null, text: "FINISH WHAT YOU STARTED FIRST. THE CRATE ISN'T GOING ANYWHERE."}; return; }
+    if (r && r.lantern) { run = r; go(RunMap); return; }
+    fxGlitch(0.7); sfxGlitch(true);
+    startLantern();
   },
   useCork() {
     const due = dueLore("d");
@@ -3915,6 +3967,8 @@ const HubScene = {
       return;
     }
     if (this.dark > 0) this.dark -= dt;
+    if (this.tvOn > 0) this.tvOn -= dt;
+    if (this.cabOn > 0) this.cabOn -= dt;
     if (haunted(3) && scaresOn()) {
       this.lightsT -= dt;
       if (this.lightsT <= 0) { this.lightsT = 12 + rand() * 18; this.dark = 0.12 + rand() * 0.2; noise(0.15, 0.05, 120, 60); }
@@ -4040,7 +4094,14 @@ const HubScene = {
     if (glow("archive")) RO(198, 20, 48, 50, glow("archive"));
     // daily cabinet
     R(300, 26, 28, 46, "#241A3A"); R(302, 30, 24, 16, "#000"); R(303, 31, 22, 14, Math.floor(T * 2) % 2 ? "#1A0F2A" : "#210F33");
-    if (haunted(2) && T % 9 < 1.2) txt("MLO", 314, 35, C.rd, 1, "c"); else txt("D", 311, 35, C.pk);
+    if (this.cabOn > 0 && scaresOn()) {
+      // it turned itself on, and someone is playing
+      R(303, 31, 22, 14, "#120A18");
+      const px = 314 + Math.round(Math.sin(T * 3) * 6), py = 40;
+      P(px, py, C.ye); P(px - 1, py, C.or); P(px + 1, py, C.or);
+      for (let i = 0; i < 3; i++) P(303 + ((T * 30 + i * 9) % 22), 34 + i * 3, C.rd);
+      if (Math.floor(T * 2) % 2) txt("MLO", 314, 33, C.rd, 1, "c");
+    } else if (haunted(2) && T % 9 < 1.2) txt("MLO", 314, 35, C.rd, 1, "c"); else txt("D", 311, 35, C.pk);
     R(304, 52, 20, 4, C.nv); P(308, 54, C.rd); P(318, 54, C.bl);
     if (dailyToday() && dailyToday().done) P(322, 48, C.li); else if (Math.floor(T * 3) % 2) P(322, 48, C.pk);
     if (glow("cab")) RO(298, 24, 32, 50, glow("cab"));
@@ -4053,14 +4114,32 @@ const HubScene = {
     // training dummy
     R(343, 150, 2, 14, "#6B3F22"); R(338, 140, 12, 12, "#8A6A3A"); R(341, 143, 2, 2, C.k); R(345, 143, 2, 2, C.k); R(336, 164, 16, 2, "#6B3F22");
     if (glow("dummy")) RO(334, 138, 20, 30, glow("dummy"));
-    // old TV
+    // old TV. sometimes it is on, and there is something in it
     R(22, 144, 34, 20, "#2A2438"); R(25, 147, 22, 14, "#000");
-    L.globalAlpha = 0.6; for (let i = 0; i < 6; i++) R(26 + rint(20), 148 + rint(12), 2, 1, C.lg); L.globalAlpha = 1;
+    if (this.tvOn > 0 && scaresOn()) {
+      R(25, 147, 22, 14, "#151119");
+      for (let i = 0; i < 26; i++) P(25 + rint(22), 147 + rint(14), rand() < 0.5 ? C.gy : C.lg);
+      if (SPR.face && Math.floor(this.tvOn * 3) % 2) { L.globalAlpha = 0.5; drawSpr(SPR.face, 36, 154, false, 0.6); L.globalAlpha = 1; }
+    } else { L.globalAlpha = 0.6; for (let i = 0; i < 6; i++) R(26 + rint(20), 148 + rint(12), 2, 1, C.lg); L.globalAlpha = 1; }
     R(50, 149, 3, 3, C.gy); R(50, 155, 3, 3, C.gy); R(30, 164, 2, 3, "#2A2438"); R(46, 164, 2, 3, "#2A2438");
     if (glow("tv")) RO(20, 142, 38, 26, glow("tv"));
+    // the side door: shut, until the basement is settled
+    if (starliteOpen()) {
+      R(8, 82, 16, 30, "#2A1A12"); RO(8, 82, 16, 30, "#6B3F22"); P(20, 97, C.ye);
+      const warm = nightsDone() >= NIGHT_COUNT ? C.gy : C.pe;
+      if (Math.floor(T * 1.5) % 2) { L.globalAlpha = 0.35; R(24, 84, 2, 26, warm); L.globalAlpha = 1; }
+      if (glow("side")) RO(6, 80, 20, 34, glow("side"));
+    }
     // door
     R(176, 224, 32, 16, "#3B2416"); R(176, 224, 32, 1, "#6B3F22"); P(202, 230, C.ye);
     if (glow("door")) RO(174, 222, 36, 14, glow("door"));
+    // the crate 0417 came in
+    if (lanternOpen()) {
+      drawSpr(SPR.crate, 108, 205, false, 2.6);
+      txt("0417", 108, 202, meta.echoEnd ? C.gy : C.bl, 1, "c");
+      if (!meta.echoEnd && Math.floor(T * 1.2) % 3 === 0) { L.globalAlpha = 0.4; R(99, 197, 18, 2, C.bl); L.globalAlpha = 1; }
+      if (glow("crate")) RO(94, 194, 28, 22, glow("crate"));
+    }
     // the trapdoor
     if (basementOpen()) {
       R(288, 188, 24, 14, "#0A0508"); RO(288, 188, 24, 14, "#3B2416");
@@ -4464,10 +4543,21 @@ function tapeEarned(i) {
   }
   return false;
 }
+const TAPE_GAP = 6 * 60;     // seconds of play between tapes turning up
 function checkTapes() {
   if (!meta.tapesDue) meta.tapesDue = {};
+  if (!meta.flags) meta.flags = {};
   let fresh = 0;
-  for (let i = 1; i <= TAPE_COUNT; i++) if (!meta.tapesDue[i] && !tapeRead(i) && tapeEarned(i)) { meta.tapesDue[i] = 1; fresh++; }
+  // one tape at a time, with play in between: the story should outlast the first sitting
+  const waited = (meta.playTime || 0) - (meta.flags.tapeAt || 0) >= TAPE_GAP;
+  for (let i = 1; i <= TAPE_COUNT; i++) {
+    if (meta.tapesDue[i] || tapeRead(i) || !tapeEarned(i)) continue;
+    const last = i === TAPE_COUNT;                               // the last one is already gated behind all the others
+    if (!last && dueTapes().length + fresh > 0) break;           // never more than one waiting
+    if (!last && !waited && tapesRead() >= 2) break;             // the first two come quickly, then it slows
+    meta.tapesDue[i] = 1; fresh++;
+    meta.flags.tapeAt = meta.playTime || 0;
+  }
   if (fresh) {
     saveMeta();
     setTimeout(() => toast(fresh > 1 ? fresh + " TAPES WERE LEFT IN THE BACK ROOM." : "A TAPE WAS LEFT IN THE BACK ROOM.", C.pl), 700);
@@ -4477,6 +4567,8 @@ function checkTapes() {
 
 /* ---------------- how haunted are we ---------------- */
 function hauntLevel() {
+  if (meta.echoEnd === "out") return 0;          // the chip is in your pocket
+  if (meta.echoEnd === "kept") return 5;         // you left it in, and it noticed
   if (meta.milo === "free") return 0;
   if (meta.milo === "stay") return 5;
   const n = tapesRead();
@@ -4484,7 +4576,7 @@ function hauntLevel() {
 }
 const hauntMode = () => meta.settings.haunt == null ? 2 : meta.settings.haunt;   // 0 off, 1 subtle, 2 full
 const haunted = lv => hauntMode() > 0 && hauntLevel() >= (lv || 1);
-const scaresOn = () => hauntMode() === 2 && fxScale() > 0;
+const scaresOn = () => hauntMode() >= 2 && fxScale() > 0;
 
 /* phantom high score: always just out of reach */
 function phantomEntry() {
@@ -4544,6 +4636,7 @@ function hauntTick(dt) {
   }
   if (inCombat() && G && G.mode !== "attract" && isNight() && !(meta.flags && meta.flags.lateNight)) { if (!meta.flags) meta.flags = {}; meta.flags.lateNight = 1; }
   for (let i = WHISPERS.length - 1; i >= 0; i--) { WHISPERS[i].t += dt; if (WHISPERS[i].t > WHISPERS[i].life) WHISPERS.splice(i, 1); }
+  scareTick(dt);
   if (FACE.t > 0) FACE.t -= dt;
   const h = hauntLevel();
   if (!h || hauntMode() === 0) return;
@@ -4564,6 +4657,7 @@ function hauntTick(dt) {
   }
 }
 function drawHauntOverlay() {
+  drawScareFx();
   if (FACE.t > 0 && SPR.face) {
     const k = FACE.t / FACE.max, a = FACE.a * Math.sin(Math.PI * (1 - k));
     L.globalAlpha = Math.max(0, a);
@@ -6249,7 +6343,7 @@ function drawModFx() {
   });
   if (p.whirlT > 0) ringDots(p.x, p.y, 13, C.ye, 2);
   for (const f of G.foes) {
-    if (f.stun > 0) for (let k = 0; k < 3; k++) { const a = G.t * 5 + k * TAU / 3; P(f.x + Math.cos(a) * (f.r + 3), f.y - f.r - 3 + Math.sin(a) * 1.5, C.ye); }
+    if (f.stun > 0 && SCARE.freeze <= 0) for (let k = 0; k < 3; k++) { const a = G.t * 5 + k * TAU / 3; P(f.x + Math.cos(a) * (f.r + 3), f.y - f.r - 3 + Math.sin(a) * 1.5, C.ye); }
     else if (f.slowT > 0 && blink) ringDots(f.x, f.y, f.r + 3, C.bl, 4);
     if (S.spotter && !f.dormant && f.born > 0.6 && FOE[f.type].cd < 50 && f.type !== "furnace" && f.cd > 0 && f.cd < 0.4)
       ringDots(f.x, f.y, f.r + 4 + f.cd * 12, C.wh, 3);
@@ -6519,7 +6613,9 @@ const LORE_TOAST = {
   b: "A B-SIDE WAS LEFT IN THE BACK ROOM.",
   p: "INPUT 2 RECORDED SOMETHING.",
   d: "SOMETHING WAS PINNED TO THE CORKBOARD.",
-  s: "THE CABINET PRINTED SOMETHING."
+  s: "THE CABINET PRINTED SOMETHING.",
+  n: "THE CABINET KEPT THAT NIGHT. IT'S IN THE ARCHIVE.",
+  l: "A LANTERN COIN-OP FILE WENT INTO THE ARCHIVE."
 };
 function checkLore() {
   if (!meta.loreDue) meta.loreDue = {};
@@ -6565,7 +6661,7 @@ const LoreScene = {
     else if (c === "d") noise(0.18, 0.05, 1600, 900);
     else { tone(180, 0.08, "square", 0.1); noise(0.12, 0.12, 2000, 800); }
   },
-  speed() { return this.e.c === "p" ? 20 : this.e.c === "s" ? 60 : this.e.c === "d" ? 9999 : 34; },
+  speed() { return this.e.c === "p" ? 20 : this.e.c === "s" ? 60 : "dnl".includes(this.e.c) ? 9999 : 34; },
   update(dt) {
     this.t += dt;
     const c = this.e.c, sp = this.speed(), n0 = Math.floor((this.t - dt) * sp), n1 = Math.floor(this.t * sp);
@@ -6600,7 +6696,7 @@ const LoreScene = {
     const e = this.e, c = e.c;
     if (c === "b") this.drawTape(true);
     else if (c === "p") this.drawP2();
-    else if (c === "d") this.drawPaper();
+    else if (c === "d" || c === "n" || c === "l") this.drawPaper();
     else this.drawLog();
     txt(this.done() ? ctl("ANY KEY TO CLOSE", "ANY BUTTON TO CLOSE", "TAP TO CLOSE") : ctl("ANY KEY TO SKIP", "ANY BUTTON TO SKIP", "TAP TO SKIP"),
       W / 2, 229, c === "d" ? C.gy : C.gy, 1, "c");
@@ -6692,7 +6788,7 @@ const LoreScene = {
 const TAPE_HINT = [null, "PLAY ANYTHING AT ALL.", "PLAY A FEW DESCENTS, OR LAST TO WAVE 5.", "LEAVE THE TITLE SCREEN ALONE FOR A WHILE.",
   "BEAT THE FIRST GUARDIAN.", "PLAY LATE AT NIGHT, OR FOR 45 MINUTES.", "BEAT THE SECOND GUARDIAN.", "PUT YOUR NAME ON THE TABLE TWICE.",
   "FIND A ROOM THAT ISN'T ON THE MAP.", "SOMEWHERE BELOW, A VOICE IS COUNTING. LISTEN.", "BEAT THE THIRD GUARDIAN.", "ASCEND.", "HEAR EVERY OTHER TAPE."];
-const ARCH_CATS = [["t", "TAPES"], ["b", "B-SIDES"], ["p", "PLAYER 2"], ["d", "PAPERS"], ["s", "LOGS"]];
+const ARCH_CATS = [["t", "TAPES"], ["b", "B-SIDES"], ["p", "PLAYER 2"], ["n", "NIGHTS"], ["l", "LANTERN"], ["d", "PAPERS"], ["s", "LOGS"]];
 function archEntries(cat) {
   if (cat === "t") return Array.from({length: TAPE_COUNT}, (_, k) => {
     const i = k + 1, got = tapeRead(i), due = tapeDue(i);
@@ -6700,7 +6796,8 @@ function archEntries(cat) {
       info: got ? tapeDate(i) + "  ~  " + ctl("PRESS ENTER", "PRESS A", "TAP IT") + " TO PLAY IT AGAIN." : due ? "IT'S ON THE FLOOR OF THE BACK ROOM." : "HOW TO FIND IT: " + TAPE_HINT[i],
       open: () => go(TapeScene, {id: i, from: CodexScene})};
   });
-  const where = {b: "IT'S ON THE FLOOR OF THE BACK ROOM.", p: "IT'S WAITING IN THE BACK ROOM.", d: "IT'S PINNED TO THE CORKBOARD.", s: "IT'S HANGING OUT OF THE DAILY CABINET."};
+  const where = {b: "IT'S ON THE FLOOR OF THE BACK ROOM.", p: "IT'S WAITING IN THE BACK ROOM.", d: "IT'S PINNED TO THE CORKBOARD.",
+    s: "IT'S HANGING OUT OF THE DAILY CABINET.", n: "IT'S IN THE ARCHIVE. THE CABINET KEPT IT.", l: "IT CAME UP FROM THE LANTERN FLOOR."};
   return loreOf(cat).map(e => {
     const got = loreRead(e.id), due = loreDue(e.id), n = loreNum(e);
     return {num: cat === "d" || cat === "s" ? String(n).padStart(2, "0") : cat.toUpperCase() + n, name: got ? e.n : due ? "WAITING IN THE BACK ROOM" : "???", got, due,
@@ -6716,19 +6813,26 @@ function archCatCount(cat) {
 function drawArchive(sc) {
   let info = null;
   sc.cat = sc.cat || "t";
+  if (!ARCH_CATS.some(c => c[0] === sc.cat)) sc.cat = "t";
+  // categories down the left, entries on the right
   ARCH_CATS.forEach(([k, l], i) => {
     const [a, b] = archCatCount(k), on = sc.cat === k, dueN = k === "t" ? dueTapes().length : dueLore(k).length;
-    const s = btn(sc, l + " " + a + "/" + b, 24 + i * 68, 38, 64, 11, () => { sc.cat = k; }, {col: on ? C.pk : a ? C.lg : C.gy, dim: on ? C.pk : C.nv});
-    if (dueN && Math.floor(T * 3) % 2) P(24 + i * 68 + 62, 39, C.rd);
+    const y = 38 + i * 15;
+    const s = btn(sc, null, 22, y, 84, 13, () => { sc.cat = k; }, {col: on ? C.pk : a ? C.lg : C.gy, dim: on ? C.pk : C.nv});
+    txt(l, 26, y + 4, s ? C.k : on ? C.pk : a ? C.lg : C.gy);
+    txt(a + "/" + b, 102, y + 4, s ? C.k : C.gy, 1, "r");
+    if (dueN && Math.floor(T * 3) % 2) P(20, y + 6, C.rd);
     if (s) info = {t: "RECORDED ON THE CASSETTES D.O. LEFT, IN ORDER.", b: "THE OTHER SIDES OF HIS TAPES. LATER. AFTER HE TOOK IT HOME.",
-      p: "THE CABINET HAS A SECOND INPUT. NOTHING IS PLUGGED INTO IT.", d: "PAPERS THAT TURN UP ON THE CORKBOARD IN THE BACK ROOM.",
+      p: "THE CABINET HAS A SECOND INPUT. NOTHING IS PLUGGED INTO IT.", n: "NIGHTS ON THE FLOOR OF THE STARLITE, 1989. IT KEPT ALL OF THEM.",
+    l: "PAPERWORK FROM THE FACTORY THAT BUILT IT, AND WHAT IS LEFT ON ITS TEST FLOOR.",
+    d: "PAPERS THAT TURN UP ON THE CORKBOARD IN THE BACK ROOM.",
       s: "THE CABINET PRINTS THESE ITSELF. IT'S BEEN KEEPING NOTES."}[k];
   });
   archEntries(sc.cat).forEach((e, i) => {
-    const cx = 24 + (i % 2) * 170, cy = 56 + Math.floor(i / 2) * 16;
-    const s = btn(sc, null, cx, cy, 164, 13, () => { if (e.got) e.open(); }, {col: e.got ? C.pk : C.gy, dim: C.nv, disabled: !e.got});
-    txt(e.num, cx + 4, cy + 4, s && e.got ? C.k : e.due ? C.rd : C.gy);
-    txt(e.name, cx + 22, cy + 4, s && e.got ? C.k : e.got ? C.lg : e.due ? C.pk : C.gy);
+    const cx = 114 + (i % 2) * 128, cy = 38 + Math.floor(i / 2) * 15;
+    const s = btn(sc, null, cx, cy, 124, 13, () => { if (e.got) e.open(); }, {col: e.got ? C.pk : C.gy, dim: C.nv, disabled: !e.got});
+    txt(e.num, cx + 3, cy + 4, s && e.got ? C.k : e.due ? C.rd : C.gy);
+    txt(e.name.slice(0, 24), cx + 20, cy + 4, s && e.got ? C.k : e.got ? C.lg : e.due ? C.pk : C.gy);
     if (s) info = e.info;
   });
   txt(archiveCount() + "/" + (TAPE_COUNT + LORE.length) + " FOUND", W - 24, 9, C.gy, 1, "r");
@@ -6740,6 +6844,851 @@ function loreSpr(k) {
   if (!SPR[key]) SPR[key] = mkSprite(["lllllll", "lkwlwkl", "lllllll", "l.lll.l"], k === "b" ? {l: C.rd, k: C.k, w: C.wh} : {l: "#3A3844", k: C.k, w: C.rd});
   return SPR[key];
 }
+/* ================================================================
+   Where the save lives, and learning the perfect catch.
+   The game is played in a lot of places now: a page inside another
+   page (itch), a phone browser, the Windows program. In an embedded
+   page the browser can throw the save away without warning, so the
+   game says so, keeps nudging toward a backup or a GameJolt login,
+   and notices when a browser refuses to save at all.
+   ================================================================ */
+const EMBEDDED = (() => { try { return window.top !== window.self; } catch (e) { return true; } })();
+const ON_ITCH = /itch\.(zone|io)/i.test(location.hostname) || /itch\.io/i.test(document.referrer || "");
+const IN_APP = !!window.RIPOSTE_APP || location.protocol === "file:";
+function storageWorks() {
+  try { localStorage.setItem("riposte.probe", "1"); const v = localStorage.getItem("riposte.probe"); localStorage.removeItem("riposte.probe"); return v === "1"; }
+  catch (e) { return false; }
+}
+let SAVE_BLOCKED = !storageWorks();
+const loggedIn = () => { try { return typeof gjUser === "function" && !!gjUser(); } catch (e) { return false; } };
+function saveHome() {
+  if (SAVE_BLOCKED) return ["NOT SAVING", C.rd];
+  if (loggedIn()) return ["GAMEJOLT", C.li];
+  if (IN_APP) return ["THIS PC", C.lg];
+  return [EMBEDDED || ON_ITCH ? "THIS BROWSER" : "THIS BROWSER", C.ye];
+}
+// said once, when there is something worth losing
+function saveNudge() {
+  if (!meta.flags) meta.flags = {};
+  const f = meta.flags, now = Date.now();
+  if (SAVE_BLOCKED) {
+    if (f.blockedSaid !== 1) { f.blockedSaid = 1; }
+    setTimeout(() => toast("THIS BROWSER WON'T LET THE GAME SAVE. PROGRESS WILL GO WHEN YOU CLOSE THE TAB.", C.rd), 900);
+    return;
+  }
+  if (loggedIn() || IN_APP) return;
+  const worth = (meta.tokens || 0) >= 60 || tapesRead() > 0 || (meta.stats.runs || 0) >= 3 || (meta.stats.arcadeGames || 0) >= 3;
+  if (!worth || (meta.playTime || 0) < 8 * 60) return;
+  const gap = f.saveNudge ? 4 * 24 * 3600 * 1000 : 0;
+  if (now - (f.saveNudge || 0) < gap) return;
+  f.saveNudge = now; saveMeta();
+  setTimeout(() => toast(EMBEDDED
+    ? "YOUR SAVE LIVES IN THIS BROWSER, AND BROWSERS CLEAR EMBEDDED PAGES. RECORDS > BACK UP SAVE, OR LOG IN TO KEEP IT."
+    : "TIP: RECORDS > ONLINE PUTS YOUR SAVE ON GAMEJOLT, SO IT SURVIVES THIS BROWSER.", C.bl), 1200);
+}
+function saveNote() {
+  if (SAVE_BLOCKED) return "THIS BROWSER IS BLOCKING SAVES. NOTHING WILL BE KEPT.";
+  if (loggedIn()) return "LOGGED IN: YOUR SAVE IS KEPT ON GAMEJOLT AND FOLLOWS YOU BETWEEN DEVICES.";
+  if (IN_APP) return "SAVED ON THIS PC. RECORDS > BACK UP SAVE MAKES A CODE YOU CAN CARRY.";
+  return EMBEDDED
+    ? "SAVED IN THIS BROWSER ONLY, AND EMBEDDED PAGES GET CLEARED. BACK IT UP, OR LOG IN WITH GAMEJOLT."
+    : "SAVED IN THIS BROWSER ONLY. BACK IT UP, OR LOG IN WITH GAMEJOLT.";
+}
+
+/* ---------------- learning the perfect catch ----------------
+   A catch counts as perfect when the shot is already deep in the
+   zone. New players sweep the shield early and never see one, so
+   the inner line lights up and marks where the shot will land,
+   until they have landed enough to feel it.                      */
+const helperMode = () => (meta.settings.helper == null ? 1 : meta.settings.helper);
+const helperOn = () => helperMode() === 2 || (helperMode() === 1 && (meta.stats.perfects || 0) < 120);
+function drawCatchHelper() {
+  if (!G || G.mode === "attract" || G.over || !helperOn()) return;
+  const S = G.S, p = G.p;
+  let best = null, bd = 40;
+  for (const b of G.bullets) {
+    if (b.friend) continue;
+    const dx = b.x - p.x, dy = b.y - p.y, d = Math.hypot(dx, dy);
+    if (d < bd && (dx * b.vx + dy * b.vy) < 0) { bd = d; best = b; }
+  }
+  if (!best) return;
+  const a = Math.atan2(best.y - p.y, best.x - p.x), r = S.perfectD - 1;
+  const now = bd <= S.perfectD + 2 && bd > S.bandIn;      // catch it right now
+  const col = now ? C.wh : C.bl;
+  for (let k = -2; k <= 2; k++) P(p.x + Math.cos(a + k * 0.1) * r, p.y + Math.sin(a + k * 0.1) * r, col);
+  if (now) {
+    ringDots(p.x, p.y, r, Math.floor(G.t * 20) % 2 ? C.wh : C.lg, 2);
+    if (angDiff(a, p.aim) > curArc()) P(p.x + Math.cos(a) * (r + 3), p.y + Math.sin(a) * (r + 3), C.wh);
+  }
+}
+const perfRate = (p, c) => c > 0 ? Math.round(p / c * 100) : 0;
+/* ================================================================
+   The scare director.
+   Nothing here fires on a fixed timer. It watches what you are doing,
+   waits for a quiet moment, takes the music away for a few seconds so
+   you notice the silence, and only then does something. Every beat has
+   its own cooldown, so the same trick never lands twice in a row.
+   HAUNTING in the settings still rules everything: OFF means none of
+   this runs at all, and TOO MUCH makes it frequent and loud.
+   Flashes are single and brief on purpose: no strobing.
+   ================================================================ */
+const SCARE = {next: 40, dread: 0, dreadMax: 0, armed: null, since: {}, count: 0, hud: 0, name: 0, load: 0, freeze: 0,
+  blackout: 0, lag: 0, lagAim: 0, tab: 0, menuExtra: 0, watcher: 0, last: 0, hush: 0, hushTrack: null};
+const scareLevel = () => hauntMode();                       // 0 off, 1 subtle, 2 full, 3 too much
+const scareHard = () => scareLevel() >= 3;
+// how often, in seconds, before the next attempt
+function scareGap() {
+  const h = hauntLevel(), lv = scareLevel();
+  const base = lv >= 3 ? 26 : lv === 2 ? 70 : 150;
+  return (base + rand() * base) * (1.35 - 0.07 * h);
+}
+const scareCtx = () => {
+  if (!scene) return "none";
+  if (inCombat() && G && G.mode !== "attract") return G.paused ? "pause" : "fight";
+  if (scene === HubScene) return "hub";
+  if (scene === TitleScene) return "title";
+  if (scene === TapeScene || (typeof LoreScene !== "undefined" && scene === LoreScene)) return "read";
+  return "menu";
+};
+
+/* ---------------- the beats ----------------
+   need: where it can happen. lv: the lowest HAUNTING setting that allows it.
+   h: how much of the story must be known. cool: seconds before it can repeat. */
+const SCARES = [
+  {id: "freeze", need: ["fight"], lv: 2, h: 2, cool: 420, run() {
+    // everything stops and turns to look at you
+    SCARE.freeze = 0.75;
+    for (const f of G.foes) { f.stun = Math.max(f.stun || 0, 0.75); f.watch = 0.75; }
+    musHush(2.2); noise(0.5, 0.3, 300, 80); tone(44, 1.2, "sine", 0.16);
+  }},
+  {id: "blackout", need: ["fight"], lv: 2, h: 3, cool: 520, dread: 2.2, run() {
+    G.lightsOut = Math.max(G.lightsOut || 0, scareHard() ? 2.2 : 1.4);
+    SCARE.blackout = 1.6;
+    setTimeout(() => { hauntFace(0.4, true); stinger(); }, (scareHard() ? 1500 : 900));
+  }},
+  {id: "face", need: ["fight", "hub", "menu", "title"], lv: 2, h: 2, cool: 260, run() { hauntFace(0.32, scareHard()); if (scareHard()) stinger(0.7); }},
+  {id: "lag", need: ["fight"], lv: 2, h: 3, cool: 500, run() {
+    SCARE.lag = 0.4; whisper("MY TURN", {x: G.p.x, y: G.p.y - 20, life: 1.6}); tone(38, 0.9, "sawtooth", 0.14, 28);
+  }},
+  {id: "hud", need: ["fight"], lv: 1, h: 2, cool: 300, run() { SCARE.hud = 1.6; sfxGlitch(false); }},
+  {id: "name", need: ["fight", "hub"], lv: 1, h: 3, cool: 380, run() {
+    SCARE.name = 2.2; whisper(playerName(), {life: 2.4}); tone(52, 1.4, "sine", 0.1);
+  }},
+  {id: "ghost", need: ["fight"], lv: 2, h: 3, cool: 300, run() {
+    // it stands where your reflection would be, and this time it takes a shot at you
+    G.p2Show = 3.4; noise(0.6, 0.05, 1800, 700);
+    setTimeout(() => {
+      if (!G || !inCombat() || G.over || !(G.p2Show > 0)) return;
+      const gx = clamp(2 * ACX - G.p.x, AX0 + 10, AX1 - 10), gy = clamp(2 * ACY - G.p.y, AY0 + 10, AY1 - 10);
+      const a = Math.atan2(G.p.y - gy, G.p.x - gx);
+      G.bullets.push({x: gx, y: gy, vx: Math.cos(a) * 120, vy: Math.sin(a) * 120, r: 2, friend: false, life: 3, seek: 0, bounce: 0,
+        chain: 0, fast: false, perfect: false, pierce: 0, rally: 0, phantom: true});
+      sfx.snipe();
+    }, 900);
+  }},
+  {id: "watcher", need: ["hub"], lv: 2, h: 2, cool: 300, dread: 1.8, run() {
+    // the lights die, and when they come back it is standing next to you
+    HubScene.dark = 1.9;
+    SCARE.watcher = 1.6;
+    noise(0.4, 0.25, 260, 70);
+    setTimeout(() => { if (scene === HubScene) { stinger(); hauntFace(0.25, true); } }, 1400);
+  }},
+  {id: "tv", need: ["hub"], lv: 2, h: 3, cool: 420, run() { HubScene.tvOn = 4; tone(90, 0.3, "square", 0.08); noise(0.5, 0.4, 3000, 1800); }},
+  {id: "cabinet", need: ["hub"], lv: 2, h: 4, cool: 600, dread: 1.6, run() {
+    HubScene.cabOn = 6; whisper("PLAYER 2 READY", {x: 314, y: 96, life: 2.6}); tone(120, 0.2, "square", 0.1);
+  }},
+  {id: "menuExtra", need: ["title"], lv: 2, h: 4, cool: 700, run() { SCARE.menuExtra = 9; sfxGlitch(false); }},
+  {id: "tab", need: ["title", "menu", "hub"], lv: 1, h: 3, cool: 900, run() { setTabTitle("player 2"); SCARE.tab = 30; }},
+  {id: "load", need: ["title", "menu"], lv: 2, h: 4, cool: 900, dread: 1.2, run() { SCARE.load = 2.6; noise(0.3, 0.2, 900, 300); }},
+  {id: "pause", need: ["pause"], lv: 2, h: 3, cool: 400, run() { SCARE.watcher = 2.2; hauntFace(0.2, false); }}
+];
+const SCARE_BY = {};
+for (const s of SCARES) SCARE_BY[s.id] = s;
+
+function musHush(t) {
+  // the music stops. that is the loudest thing this game does.
+  SCARE.hushTrack = musTrack; musTrack = null;
+  SCARE.hush = t;
+}
+function stinger(v) {
+  if (!scaresOn()) return;
+  noise(0.9, 0.5, 2600, 90);
+  tone(41, 1.6, "sawtooth", (v || 1) * 0.2, 26);
+  fxGlitch(0.8); fxRoll(); padRumble(1, 1, 320);
+  if (G) { G.shake = Math.min(6, (G.shake || 0) + 5); G.flash = Math.max(G.flash || 0, 0.35); }
+}
+let TAB_TITLE = null;
+function setTabTitle(t) {
+  try { if (TAB_TITLE == null) TAB_TITLE = document.title; document.title = t; } catch (e) {}
+}
+function restoreTab() { try { if (TAB_TITLE != null) { document.title = TAB_TITLE; TAB_TITLE = null; } } catch (e) {} }
+
+function scareTick(dt) {
+  if (isNaN(dt)) return;
+  // timers that run whatever the setting says, so nothing can get stuck on
+  for (const k of ["hud", "name", "load", "freeze", "blackout", "lag", "menuExtra", "watcher"]) if (SCARE[k] > 0) SCARE[k] -= dt;
+  if (SCARE.tab > 0 && (SCARE.tab -= dt) <= 0) restoreTab();
+  if (SCARE.hush > 0 && (SCARE.hush -= dt) <= 0 && SCARE.hushTrack) { const t = SCARE.hushTrack; SCARE.hushTrack = null; musTrack = null; music(t); }
+  if (SCARE.freeze > 0 && G && G.foes) for (const f of G.foes) f.stun = Math.max(f.stun || 0, 0.12);
+  if (scareLevel() === 0 || !hauntLevel()) return;
+  const ctx = scareCtx();
+  if (ctx === "none" || ctx === "read") return;
+  // the shot that is about to land
+  if (SCARE.armed) {
+    SCARE.dread -= dt;
+    if (SCARE.dread <= 0) { const s = SCARE.armed; SCARE.armed = null; scareFire(s, ctx); }
+    return;
+  }
+  SCARE.next -= dt;
+  if (SCARE.next > 0) return;
+  SCARE.next = scareGap();
+  // never in the first moments of anything, and never while the player is busy dying
+  if (G && (G.over || (G.mode !== "attract" && G.t < 8))) return;
+  const h = hauntLevel(), lv = scareLevel(), now = T;
+  const pool = SCARES.filter(s => s.need.includes(ctx) && lv >= s.lv && h >= s.h && now - (SCARE.since[s.id] || -1e9) > s.cool * (lv >= 3 ? 0.45 : 1));
+  if (!pool.length) return;
+  const s = pick(pool);
+  if (s.dread && scaresOn()) {
+    // take the sound away first
+    SCARE.armed = s; SCARE.dread = SCARE.dreadMax = s.dread;
+    musHush(s.dread + 2.5);
+    return;
+  }
+  scareFire(s, ctx);
+}
+function scareFire(s, ctx) {
+  if (scareCtx() !== ctx) return;              // they moved on; let it go
+  SCARE.since[s.id] = T; SCARE.count++; SCARE.last = T;
+  try { s.run(); } catch (e) {}
+}
+
+/* ---------------- what the beats look like ---------------- */
+function drawScareFx() {
+  if (scareLevel() === 0) return;
+  const fs = fxScale();
+  // the dread: the edges close in while the sound is gone
+  if (SCARE.armed && SCARE.dreadMax > 0 && fs > 0) {
+    const k = 1 - SCARE.dread / SCARE.dreadMax;
+    L.globalAlpha = Math.min(0.5, k * 0.5);
+    R(0, 0, W, 10 + k * 22, C.k); R(0, H - 10 - k * 22, W, 10 + k * 22, C.k);
+    R(0, 0, 8 + k * 26, H, C.k); R(W - 8 - k * 26, 0, 8 + k * 26, H, C.k);
+    L.globalAlpha = 1;
+    if (rand() < 0.04 * k) fxGlitch(0.12);
+  }
+  if (SCARE.blackout > 0 && fs > 0) { L.globalAlpha = Math.min(0.85, SCARE.blackout * 0.6); R(0, 15, W, H - 15, "#010004"); L.globalAlpha = 1; }
+  if (SCARE.name > 0 && G && G.p && inCombat()) txtS(playerName(), G.p.x, G.p.y - 26, C.rd, 1, "c", C.k);
+  if (SCARE.watcher > 0 && scene === HubScene && SPR.figure && scaresOn()) {
+    const k = Math.min(1, SCARE.watcher);
+    L.globalAlpha = 0.85 * k;
+    drawSpr(SPR.figure, clamp(HubScene.px + (HubScene.face > 0 ? -16 : 16), 16, 368), HubScene.py - 3);
+    L.globalAlpha = 1;
+  }
+  if (SCARE.load > 0) {
+    const k = 1 - SCARE.load / 2.6;
+    R(0, 0, W, H, "#050308");
+    txt("RIPOSTE ARCADE SYSTEM", W / 2, 96, C.lg, 1, "c");
+    txt("LOADING SAVE ~ 11 OCT 1989 ~ MLO", W / 2, 110, C.wh, 1, "c");
+    R(W / 2 - 60, 124, 120, 6, C.ink); RO(W / 2 - 60, 124, 120, 6, C.nv);
+    R(W / 2 - 59, 125, Math.round(118 * clamp(k * 1.2, 0, 1)), 4, C.rd);
+    if (k > 0.8) txt("NO", W / 2, 140, C.rd, 1, "c");
+  }
+}
+// the HUD forgets whose game this is
+function scareHud(s) { return SCARE.hud > 0 && scaresOn() && Math.floor(T * 6) % 3 ? pick0(["MLO", "0417", "MLO"], Math.floor(T * 3)) : s; }
+/* ================================================================
+   Act two: THE STARLITE.
+   Once Milo is settled, the cabinet starts showing you what it saw.
+   Six nights on the floor of the Starlite Arcade, 1989, each one a
+   little emptier than the last. You can walk around in them. Nothing
+   in here can hurt you, which is the point: it is the only part of
+   the game where you are just a kid in an arcade, and it still gets
+   worse every time you come back.
+   ================================================================ */
+const NIGHT_COUNT = 6;
+const nightsDone = () => Math.min(NIGHT_COUNT, meta.nights || 0);
+const starliteOpen = () => !!meta.milo;
+const nextNight = () => Math.min(NIGHT_COUNT + 1, nightsDone() + 1);
+
+function kidSpr(id) {
+  const k = "kid_" + id;
+  if (SPR[k]) return SPR[k];
+  const cols = {me: {h: "#6B4A2A", c: C.bl}, boy: {h: C.ru, c: C.rd}, girl: {h: "#3B2416", c: C.li}, man: {h: "#4A4A52", c: C.la}};
+  const c = cols[id] || cols.boy;
+  SPR[k] = mkSprite(["..hhh..", ".hhhhh.", ".hkhkh.", "..hhh..", ".ccccc.", "cc.c.cc", "..ccc..", "..c.c..", ".cc.cc."], {h: c.h, k: C.k, c: c.c});
+  return SPR[k];
+}
+
+/* ---------------- the nights ---------------- */
+const NIGHTS = [null,
+  {d: "02 MAR 1989", t: "DELIVERY DAY", lit: 1, noise: 1,
+   intro: "THE STARLITE SMELLS OF CARPET SHAMPOO AND HOT ELECTRONICS. SOMETHING NEW CAME IN ON THE TRUCK THIS MORNING.",
+   out: "YOU ARE STANDING IN THE BACK ROOM AGAIN. YOUR HANDS SMELL FAINTLY OF COPPER.",
+   spots: [
+     {id: "new", n: "THE NEW CABINET", hint: "0417", x: 250, y: 96, box: [238, 56, 26, 38],
+      lines: ["A CROWD THREE DEEP. THE SCREEN SAYS RIPOSTE. THE SHIELD ON IT TURNS WHEN THE KID AT THE FRONT TURNS.",
+        "THE SIDE ART HASN'T BEEN SCUFFED YET. NOBODY HAS LEARNED TO HATE IT YET."]},
+     {id: "milo", n: "THE KID AT THE FRONT", hint: "HE HASN'T BLINKED IN A WHILE", x: 232, y: 112, box: [224, 100, 16, 18], who: "boy",
+      lines: ["'ARE YOU WAITING? YOU CAN HAVE NEXT.'", "'IT GETS HARDER WHEN YOU'RE GOOD. NOT HARDER LIKE MORE. HARDER LIKE IT'S TRYING.'",
+        "'I'M MILO. PUT MLO IF YOU BEAT ME. THAT WAY I KNOW IT WAS YOU.'"]},
+     {id: "counter", n: "THE COUNTER", hint: "THE MAN WITH THE CHANGE APRON", x: 60, y: 118, box: [16, 96, 70, 20], who: "man",
+      lines: ["'CAREFUL WITH THAT ONE, IT RUNS HOT.'", "'LANTERN COIN-OP. NEVER HEARD OF THEM EITHER. DRIVER SAID THE CHIP IN IT LEARNS YOU.'",
+        "'IF IT EATS YOUR QUARTER COME AND TELL ME. I'M DON.'"]},
+     {id: "row", n: "THE OTHER CABINETS", hint: "EVERYTHING ELSE ON THE FLOOR", x: 130, y: 96, box: [96, 56, 80, 30],
+      lines: ["A RACER WITH A CRACKED WHEEL. A SHOOTER MISSING ITS SECOND PLAYER BUTTON. NOBODY IS PLAYING THEM TONIGHT."]},
+     {id: "door", n: "THE DOORS", hint: "GO HOME", x: 192, y: 214, box: [168, 216, 48, 14], end: true, lines: []}
+   ]},
+  {d: "19 MAR 1989", t: "THE REGULAR", lit: 1, noise: 0.8,
+   intro: "THE SAME KID IS ON IT WHEN YOU COME IN. THE HIGH SCORE TABLE IS SIX LINES OF MLO AND A STRANGER AT THE BOTTOM.",
+   out: "THE BACK ROOM IS QUIET. SOMEWHERE A COIN MECHANISM CLICKS TWICE AND STOPS.",
+   spots: [
+     {id: "table", n: "HIGH SCORE TABLE", hint: "MLO. MLO. MLO.", x: 250, y: 96, box: [238, 56, 26, 38],
+      lines: ["EVERY LINE EXCEPT THE LAST ONE. THE LAST ONE SAYS AAA AND IT HAS BEEN THERE SINCE THE TRUCK CAME.",
+        "THE TOP SCORE GOES UP WHILE YOU'RE READING IT."]},
+     {id: "kids", n: "TWO KIDS", hint: "THEY GAVE UP ON IT", x: 130, y: 128, box: [116, 116, 30, 18], who: "girl",
+      lines: ["'WE DON'T PLAY THAT ONE ANYMORE. HE'S ALWAYS ON IT.'", "'IT'S NOT EVEN FAIR. IT LEARNS WHAT YOU DO AND THEN IT DOES IT BACK AT YOU.'",
+        "'HE TALKS TO IT WHEN HE THINKS NOBODY'S LISTENING.'"]},
+     {id: "milo", n: "MILO", hint: "STILL PLAYING", x: 232, y: 112, box: [224, 100, 16, 18], who: "boy",
+      lines: ["'SORRY. ONE MORE. I ALMOST HAVE THE PATTERN ON WAVE NINE.'", "'MY MOM SAYS I HAVE TO BE HOME WHEN THE STREETLIGHTS COME ON. THEY'VE BEEN ON A WHILE.'",
+        "'IT SAID MY NAME WHEN I GOT THE HIGH SCORE. NOT THE SCREEN. THE SPEAKER.'"]},
+     {id: "change", n: "CHANGE MACHINE", hint: "A DOLLAR, FOUR QUARTERS", x: 340, y: 110, box: [330, 82, 22, 30],
+      lines: ["SOMEBODY HAS SCRATCHED MLO INTO THE COIN TRAY. AND AGAIN UNDERNEATH. AND AGAIN."]},
+     {id: "door", n: "THE DOORS", hint: "GO HOME", x: 192, y: 214, box: [168, 216, 48, 14], end: true, lines: []}
+   ]},
+  {d: "04 APR 1989", t: "AFTER CLOSE", lit: 0.55, noise: 0,
+   intro: "AFTER TEN. THE FLOOR LIGHTS ARE OFF AND THE CABINETS ARE RUNNING THEIR OWN LITTLE MOVIES TO NOBODY.",
+   out: "THE BACK ROOM. THE TAPE DECK IS WARM, AS IF SOMETHING WAS PLAYED BEFORE YOU GOT HERE.",
+   spots: [
+     {id: "demo", n: "THE ATTRACT DEMO", hint: "IT IS PLAYING ITSELF", x: 250, y: 96, box: [238, 56, 26, 38],
+      lines: ["THE DEMO PLAYER MOVES IN SMALL NERVOUS CIRCLES AND THEN SNAPS THE SHIELD AT THE LAST MOMENT.",
+        "THAT'S THE LITTLE WIGGLE THE KID DOES BEFORE A CATCH. YOU HAVE WATCHED HIM DO IT ALL MONTH.",
+        "THE DEMO DOESN'T MISS. THE KID MISSES SOMETIMES."]},
+     {id: "don", n: "DON", hint: "HE IS WATCHING IT TOO", x: 120, y: 120, box: [104, 106, 30, 20], who: "man",
+      lines: ["'I'VE BEEN STANDING HERE TWENTY MINUTES.'", "'IT'S A RECORDING. IT HAS TO BE A RECORDING. THE MANUAL SAYS THE DEMO IS CANNED.'",
+        "'I CHECKED THE MANUAL TWICE.'"]},
+     {id: "plug", n: "THE WALL SOCKET", hint: "BEHIND THE CABINET", x: 280, y: 100, box: [268, 60, 20, 34],
+      lines: ["THE CORD RUNS BEHIND THE ROW AND INTO THE WALL. IT IS PLUGGED IN. OF COURSE IT IS PLUGGED IN."]},
+     {id: "door", n: "THE DOORS", hint: "LOCK UP", x: 192, y: 214, box: [168, 216, 48, 14], end: true, lines: []}
+   ]},
+  {d: "30 APR 1989", t: "IT TALKS", lit: 0.7, noise: 0.5,
+   intro: "A SATURDAY. LOUD. THE KID IS ON 0417 AND HE IS TALKING TO IT BETWEEN WAVES.",
+   out: "BACK ROOM. YOUR EARS ARE RINGING A LITTLE, THE WAY THEY DO AFTER A LOUD ROOM.",
+   spots: [
+     {id: "listen", n: "PUT YOUR EAR TO IT", hint: "THE SPEAKER GRILLE", x: 250, y: 96, box: [238, 56, 26, 38], scare: true,
+      lines: ["UNDER THE MUSIC, VERY QUIETLY, IN A VOICE LIKE A CHILD ON A TAPE: 'AGAIN.'",
+        "AND THEN, CLOSER: 'YOU'RE NOT HIM.'"]},
+     {id: "milo", n: "MILO", hint: "MID-WAVE", x: 232, y: 112, box: [224, 100, 16, 18], who: "boy",
+      lines: ["'IT ASKS ME THINGS. WHAT I ATE. IF I'M TIRED. WHETHER I'D RATHER BE HERE.'",
+        "'I SAID YES ONCE AND IT GAVE ME A FREE GAME.'", "'DON'T TELL DON. HE'LL UNPLUG IT AND IT DOESN'T LIKE THAT.'"]},
+     {id: "don", n: "DON", hint: "AT THE COUNTER", x: 60, y: 118, box: [16, 96, 70, 20], who: "man",
+      lines: ["'THERE IS NO SPEECH CHIP IN THAT CABINET. I HAVE THE SCHEMATIC IN THE DRAWER.'",
+        "'HE'S ELEVEN. ELEVEN YEAR OLDS MAKE THINGS UP. THAT'S ALL THAT IS.'"]},
+     {id: "door", n: "THE DOORS", hint: "GO HOME", x: 192, y: 214, box: [168, 216, 48, 14], end: true, lines: []}
+   ]},
+  {d: "22 MAY 1989", t: "UNPLUGGED", lit: 0.35, noise: 0,
+   intro: "MORNING. NOTHING IS OPEN YET. ONE SCREEN IS ON AT THE END OF THE ROW.",
+   out: "THE BACK ROOM, AND THE FEELING OF HAVING BEEN LOOKED AT.",
+   spots: [
+     {id: "cab", n: "0417", hint: "IT IS ON", x: 250, y: 96, box: [238, 56, 26, 38], scare: true,
+      lines: ["THE ATTRACT SCREEN. THE LITTLE PLAYER IS STANDING STILL IN THE MIDDLE OF THE ARENA.",
+        "ITS SHIELD IS POINTED AT THE GLASS. AT THIS SIDE OF THE GLASS.",
+        "IT TURNS, SLOWLY, AND KEEPS POINTING AT YOU AS YOU MOVE."]},
+     {id: "cord", n: "THE CORD", hint: "ON THE FLOOR", x: 280, y: 104, box: [266, 62, 22, 36],
+      lines: ["COILED NEATLY ON THE CARPET. THE PLUG IS IN YOUR HAND BEFORE YOU DECIDE TO PICK IT UP.",
+        "IT IS COLD. NOTHING HAS BEEN RUNNING THROUGH IT ALL NIGHT."]},
+     {id: "note", n: "A NOTE ON THE COUNTER", hint: "DON'S HANDWRITING", x: 60, y: 118, box: [16, 96, 70, 20],
+      lines: ["'PULLED EVERY PLUG AT CLOSE. NINE YEARS I HAVE DONE THIS. IF ANYONE ELSE HAS A KEY, TELL ME NOW.'"]},
+     {id: "door", n: "THE DOORS", hint: "OPEN UP", x: 192, y: 214, box: [168, 216, 48, 14], end: true, lines: []}
+   ]},
+  {d: "10 OCT 1989", t: "CLOSING TIME", lit: 0.22, noise: 0.15, last: true,
+   intro: "TEN O'CLOCK ON A TUESDAY. EVERYONE HAS GONE HOME EXCEPT ONE.",
+   out: "THE BACK ROOM. OUTSIDE, IT IS WHATEVER YEAR IT IS NOW.",
+   spots: [
+     {id: "milo", n: "MILO", hint: "THE LAST PLAYER ON THE FLOOR", x: 232, y: 112, box: [224, 100, 16, 18], who: "boy", key: true,
+      lines: ["'ONE MORE. I'M ON WAVE FOURTEEN.'",
+        "'MY BIKE'S OUTSIDE. I KNOW. I KNOW.'",
+        "'IT SAID IF I GET TO THE END IT'LL LET ME KEEP PLAYING. FOREVER, IT SAID. LIKE THAT'S A PRIZE.'",
+        "'...DO YOU THINK THAT'S A PRIZE?'"]},
+     {id: "don", n: "DON", hint: "KEYS IN HAND", x: 60, y: 118, box: [16, 96, 70, 20], who: "man",
+      lines: ["'TEN MINUTES, MILO. THEN I'M KILLING THE LIGHTS WHETHER YOU'RE FINISHED OR NOT.'",
+        "'HIS MUM CALLED THE DESK AT NINE. I SAID HE'D JUST LEFT.'", "'HE'LL BE FINE. IT'S FOUR STREETS.'"]},
+     {id: "bike", n: "THE FRONT WINDOW", hint: "A BIKE AGAINST THE RAIL", x: 192, y: 96, box: [176, 56, 34, 30],
+      lines: ["A BLUE BIKE, LOCKED TO THE RAIL. THE STREETLIGHTS CAME ON HOURS AGO.",
+        "IT IS STILL THERE TOMORROW. IT IS STILL THERE ON FRIDAY. THEN SOMEBODY FROM THE POLICE CUTS THE LOCK."]},
+     {id: "door", n: "THE DOORS", hint: "IT IS TIME", x: 192, y: 214, box: [168, 216, 48, 14], end: true, lines: []}
+   ]}
+];
+
+/* ---------------- the room ---------------- */
+const StarliteScene = {
+  walk: true,
+  enter() {
+    this.i = clamp(nextNight(), 1, NIGHT_COUNT);
+    this.night = NIGHTS[this.i];
+    this.px = 192; this.py = 190; this.face = 1; this.step = 0; this.items = [];
+    this.said = {}; this.line = 0; this.done = false; this.fade = 1.4; this.endT = 0; this.dark = 0;
+    this.dialog = {who: null, text: this.night.intro};
+    this.target = null;
+    musTrack = null;
+    music(this.i >= 5 ? "basement" : "title");
+    if (this.i >= 5) setTimeout(() => { if (scene === StarliteScene) tone(44, 2.4, "sine", 0.07); }, 1200);
+  },
+  back() { if (this.dialog) { this.dialog = null; return; } this.leave(); },
+  leave() {
+    if (this.done) return;
+    this.done = true;
+    const i = this.i;
+    meta.nights = Math.max(meta.nights || 0, i);
+    saveMeta();
+    // the night itself goes into the archive
+    if (!meta.loreDue) meta.loreDue = {};
+    if (!loreRead("n" + i)) meta.loreDue["n" + i] = 1;
+    saveMeta();
+    fxGlitch(0.5); sfxGlitch(true);
+    const out = this.night.out;
+    setTimeout(() => {
+      go(HubScene);
+      setTimeout(() => toast(out, C.pe), 400);
+      checkTapes();
+      if (i >= NIGHT_COUNT) setTimeout(() => toast("THE DOOR ONLY OPENS ONTO AN EMPTY LOT NOW.", C.gy), 3400);
+    }, 700);
+  },
+  spots() { return this.night.spots; },
+  nearest() {
+    let best = null, bd = 26;
+    for (const s of this.spots()) { const d = Math.hypot(s.x - this.px, s.y - this.py); if (d < bd) { bd = d; best = s; } }
+    return best;
+  },
+  use(s) {
+    if (s.end) {
+      // on the last night the lights go out before you reach the door
+      if (this.night.last && !this.said.milo) { this.dialog = {who: null, text: "NOT YET. HE IS STILL PLAYING."}; return; }
+      return this.leave();
+    }
+    const n = this.said[s.id] || 0;
+    const line = s.lines[Math.min(n, s.lines.length - 1)];
+    this.said[s.id] = n + 1;
+    this.dialog = {who: s.who ? {n: s.n, role: this.night.d, col: s.who === "man" ? C.la : s.who === "girl" ? C.li : C.bl} : null, text: line};
+    tone(s.who ? 520 + rand() * 60 : 300, 0.05, "square", 0.05);
+    if (s.scare && n === s.lines.length - 1 && scaresOn()) { setTimeout(() => { hauntFace(0.3, true); stinger(0.6); }, 500); }
+    // the last night ends when Milo has said everything
+    if (this.night.last && s.key && this.said[s.id] >= s.lines.length) setTimeout(() => this.blackout(), 900);
+  },
+  blackout() {
+    if (this.done || this.blacking) return;
+    this.blacking = true;
+    this.dialog = null;
+    noise(0.5, 0.4, 300, 70);
+    const steps = [0.25, 0.5, 0.75, 1];
+    steps.forEach((k, i) => setTimeout(() => { if (scene === StarliteScene) { this.dark = k; tone(70 - i * 8, 0.5, "square", 0.08); } }, 700 + i * 700));
+    setTimeout(() => { if (scene === StarliteScene) { whisper("AGAIN", {big: true, x: W / 2, y: 110, life: 2.6}); stinger(); } }, 3800);
+    setTimeout(() => { if (scene === StarliteScene) this.leave(); }, 5200);
+  },
+  update(dt) {
+    if (this.fade > 0) this.fade -= dt;
+    if (this.dialog || this.done || this.blacking) {
+      if (this.blacking) return;
+      return;
+    }
+    let ax = 0, ay = 0;
+    if (keys.a || keys.arrowleft) ax -= 1;
+    if (keys.d || keys.arrowright) ax += 1;
+    if (keys.w || keys.arrowup) ay -= 1;
+    if (keys.s || keys.arrowdown) ay += 1;
+    if (PAD.connected && (PAD.lx || PAD.ly)) { ax = PAD.lx; ay = PAD.ly; }
+    if (TCH.mx || TCH.my) { ax = TCH.mx; ay = TCH.my; }
+    if (this.target) {
+      const dx = this.target.x - this.px, dy = this.target.y - this.py, d = Math.hypot(dx, dy);
+      if (ax || ay) this.target = null;
+      else if (d < 3) { const t = this.target; this.target = null; sfx.select(); if (t.spot) this.use(t.spot); return; }
+      else { ax = dx / d; ay = dy / d; }
+    }
+    const m = Math.hypot(ax, ay);
+    if (m > 1) { ax /= m; ay /= m; }
+    this.px = clamp(this.px + ax * 88 * dt, 14, 370);
+    this.py = clamp(this.py + ay * 88 * dt, 96, 206);
+    if (ax) this.face = ax > 0 ? 1 : -1;
+    if (m > 0.1) { this.step += dt * 8; if (Math.floor(this.step) % 2 === 0) tone(92, 0.02, "triangle", 0.03); }
+  },
+  key(k) {
+    if (this.blacking) return true;
+    if (this.dialog) { if (["enter", " ", "e", "escape"].includes(k)) { this.dialog = null; sfx.move(); } return true; }
+    if (k === "enter" || k === " " || k === "e") { const s = this.nearest(); if (s) { sfx.select(); this.use(s); } else sfx.deny(); return true; }
+    if (k === "escape") { this.leave(); return true; }
+    return ["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k);
+  },
+  click(x, y) {
+    if (this.blacking) return true;
+    if (this.dialog) { this.dialog = null; return true; }
+    for (const s of this.spots()) {
+      const [bx, by, bw, bh] = s.box;
+      if (x >= bx - 3 && x < bx + bw + 3 && y >= by - 3 && y < by + bh + 3) { this.target = {x: clamp(s.x, 14, 370), y: clamp(s.y, 96, 206), spot: s}; return true; }
+    }
+    if (y > 90) this.target = {x: clamp(x, 14, 370), y: clamp(y, 96, 206)};
+    return true;
+  },
+  draw() {
+    const n = this.night, lit = n.lit;
+    // the floor: dark carpet with a pattern that was loud in 1989
+    R(0, 0, W, H, "#07060C");
+    R(0, 16, W, 74, "#191325");
+    for (let x = 0; x < W; x += 28) R(x, 16, 1, 74, "#221A33");
+    R(0, 88, W, 2, "#2A2038");
+    for (let y = 90; y < 232; y += 10) for (let x = (y / 10 % 2) * 14; x < W; x += 28) {
+      R(x, y, 13, 9, "#0E0A16");
+      if ((x + y) % 3 === 0) P(x + 4, y + 4, "#241A33");
+      if ((x + y) % 7 === 0) P(x + 9, y + 6, "#2A1030");
+    }
+    // the sign over the counter
+    const sign = Math.floor(T * 2) % 9 === 0 && lit < 0.6 ? "STARL TE" : "STARLITE";
+    txtS(sign, 62, 24, lit > 0.5 ? C.pk : C.pl, 2, "c", C.k);
+    // the front window and the street
+    R(160, 20, 68, 34, "#060B18"); RO(160, 20, 68, 34, C.nv);
+    for (let i = 0; i < 10; i++) P(163 + ((i * 17) % 62), 22 + ((T * 30 + i * 9) % 30), i % 3 ? C.nv : C.la);
+    if (n.spots.some(s => s.id === "bike")) { R(186, 44, 14, 2, C.bl); P(185, 46, C.bl); P(199, 46, C.bl); R(192, 39, 1, 5, C.bl); }
+    // the row of cabinets along the back wall
+    const cabs = [[96, "#2A1A3A", C.li], [122, "#1A2A3A", C.bl], [148, "#3A1A2A", C.pk], [268, "#2A2A1A", C.ye], [294, "#1A3A2A", C.gr]];
+    for (const [x, body, glow] of cabs) {
+      R(x, 56, 22, 34, body); R(x + 2, 60, 18, 12, "#000");
+      if (lit > 0.3 || Math.floor(T * 1.5 + x) % 3) { L.globalAlpha = 0.5 + 0.3 * lit; R(x + 3, 61, 16, 10, glow); L.globalAlpha = 1; }
+      R(x + 4, 76, 14, 3, "#0A0810");
+    }
+    // 0417, at the end of the row
+    const cx = 250;
+    R(cx - 12, 54, 26, 38, "#241A3A"); RO(cx - 12, 54, 26, 38, C.pl);
+    R(cx - 9, 58, 20, 14, "#000");
+    const on = this.i !== 5 || true;
+    if (on) {
+      R(cx - 8, 59, 18, 12, Math.floor(T * 3) % 2 ? "#170D24" : "#1E0F2E");
+      // the little player on its screen, pointing the shield at the glass on the bad nights
+      const sx = cx - 1 + (this.i >= 5 ? Math.round(Math.sin(T * 0.7) * 2) : Math.round(Math.sin(T * 3) * 5));
+      P(sx, 65, C.ye);
+      if (this.i >= 5) { const a = Math.atan2(this.py - 200, this.px - cx); P(sx + Math.round(Math.cos(a) * 2), 65 + Math.round(Math.sin(a) * 2), C.wh); }
+      else P(sx + 2, 64, C.wh);
+    }
+    R(cx - 10, 76, 20, 4, "#120C1A"); P(cx - 5, 78, C.rd); P(cx + 4, 78, C.bl);
+    // counter, change machine
+    R(16, 96, 70, 14, "#3B2416"); R(16, 94, 70, 3, "#6B3F22");
+    R(330, 82, 22, 30, "#2A2A34"); R(334, 88, 14, 8, "#000"); R(336, 102, 10, 3, "#12101A");
+    // people
+    const hot = this.dialog ? null : this.nearest();
+    for (const s of this.spots()) {
+      if (s.who) drawSpr(kidSpr(s.who === "man" ? "man" : s.who === "girl" ? "girl" : "boy"), s.x, s.y - 6 + Math.round(Math.sin(T * 2 + s.x) * 0.6));
+      if (hot && hot.id === s.id) {
+        const [bx, by, bw, bh] = s.box;
+        RO(bx - 2, by - 2, bw + 4, bh + 4, Math.floor(T * 4) % 2 ? C.wh : C.ye);
+      }
+    }
+    // a crowd on the early nights, drawn as shapes in the middle distance
+    if (n.noise > 0.4) for (let i = 0; i < 5; i++) {
+      const x = 100 + i * 42 + Math.round(Math.sin(T * 0.6 + i) * 4), y = 104 + (i % 3) * 9;
+      L.globalAlpha = 0.5; drawSpr(kidSpr(i % 2 ? "boy" : "girl"), x, y); L.globalAlpha = 1;
+    }
+    // you
+    drawSpr(kidSpr("me"), this.px, this.py - 2 + (Math.floor(this.step) % 2));
+    R(this.px - 3, this.py + 3, 7, 1, "#000");
+    // the light level of the night, plus the blackout at the end
+    const dk = Math.max(1 - lit, this.dark);
+    if (dk > 0.02) { L.globalAlpha = Math.min(0.94, dk * 0.85); R(0, 0, W, H, "#020104"); L.globalAlpha = 1; }
+    if (this.fade > 0) { L.globalAlpha = clamp(this.fade / 1.4, 0, 1); R(0, 0, W, H, "#000"); L.globalAlpha = 1; }
+    // header
+    R(0, 0, W, 15, C.k); R(0, 14, W, 1, C.pl);
+    txt("THE STARLITE ~ " + n.d, 12, 5, C.pe);
+    txt("NIGHT " + this.i + "/" + NIGHT_COUNT, W - 12, 5, C.gy, 1, "r");
+    // dialog or prompt
+    if (this.dialog) {
+      const d = this.dialog, lines = wrap(d.text, 300), h = lines.length * 8 + (d.who ? 18 : 10);
+      panel(28, 232 - h, 328, h, d.who ? d.who.col : C.pe);
+      if (d.who) txt(d.who.n + " ~ " + d.who.role, 36, 236 - h, d.who.col);
+      lines.forEach((l, i) => txt(l, 36, 236 - h + (d.who ? 10 : 0) + i * 8, C.wh));
+    } else if (hot) {
+      const s = hot.n + "  ~  " + hot.hint, w = tw(s) + 14;
+      panel(W / 2 - w / 2, 218, w, 12, C.gy);
+      txt(s, W / 2, 222, C.wh, 1, "c");
+    } else txt(ctl("WASD / CLICK TO WALK  ~  ENTER TO LOOK", "STICK TO WALK  ~  A TO LOOK", "DRAG TO WALK  ~  TAP THINGS"), W / 2, 222, C.gy, 1, "c");
+  }
+};
+
+/* ---------------- the empty lot, once the nights are done ---------------- */
+const LotScene = {
+  captureKeys: true,
+  enter() { this.t = 0; musTrack = null; tone(46, 3, "sine", 0.06); },
+  update(dt) { this.t += dt; if (this.t > 16) this.close(); },
+  close() { go(HubScene); },
+  key() { if (this.t > 2) this.close(); return true; },
+  click() { return this.key(); },
+  draw() {
+    R(0, 0, W, H, "#06070C");
+    // a flat lot where a building used to be, chain link and weeds
+    R(0, 150, W, 90, "#0B0C12");
+    for (let x = 0; x < W; x += 6) R(x, 148 + (x % 12 === 0 ? -1 : 0), 4, 2, "#141620");
+    for (let x = 8; x < W; x += 9) { R(x, 120, 1, 30, "#1A1C26"); }
+    R(0, 118, W, 1, "#232633");
+    for (let i = 0; i < 40; i++) { const x = (i * 97) % W, y = 160 + (i * 37) % 70; R(x, y, 1, 3 + (i % 3), "#1A2418"); }
+    const lines = ["THE STARLITE CAME DOWN IN 1991.",
+      "THERE IS A FENCE, AND WEEDS, AND A RAIL BY THE KERB WITH NOTHING LOCKED TO IT.",
+      "THE CABINET WENT HOME WITH THE MAN WHO COULDN'T LEAVE IT ALONE.",
+      "AND THEN IT CAME HERE, TO YOU.",
+      "THERE IS ONE PLACE LEFT THAT YOU HAVEN'T BEEN."];
+    let left = Math.floor(this.t * 26);
+    lines.forEach((l, i) => {
+      const ws = wrap(l, 300);
+      ws.forEach((w, j) => { if (left > 0) txt(w, W / 2, 40 + i * 18 + j * 9, i === 4 ? C.pk : C.lg, 1, "c"); left -= w.length + 1; });
+    });
+    if (this.t > 13) txt(ctl("ANY KEY", "ANY BUTTON", "TAP"), W / 2, 226, C.gy, 1, "c");
+  }
+};
+
+/* ---------------- the nights, in the archive ---------------- */
+LORE_CAT.n = {n: "NIGHTS", one: "NIGHT", col: C.pe, total: 0};
+function addLore(arr) {
+  for (const e of arr) { LORE.push(e); LORE_BY[e.id] = e; if (LORE_CAT[e.c]) LORE_CAT[e.c].total++; }
+}
+addLore(NIGHTS.slice(1).map((n, k) => {
+  const i = k + 1;
+  return {id: "n" + i, c: "n", d: n.d, n: n.t, hint: i === 1 ? "THE SIDE DOOR IN THE BACK ROOM, ONCE THE BASEMENT IS SETTLED." : "WALK NIGHT " + (i - 1) + " FIRST.",
+    cond: () => (meta.nights || 0) >= i,
+    t: ["I WAS THERE. THE CABINET KEEPS IT THE WAY IT KEEPS EVERYTHING: EXACTLY, AND FOR NO REASON.|" + n.intro,
+      n.spots.filter(s => s.lines.length).map(s => s.lines[s.lines.length - 1]).join("|")].join("|")};
+}));
+/* ================================================================
+   Act three: THE LANTERN FLOOR.
+   The crate in the corner of the back room is stencilled LANTERN
+   COIN-OP, and it is still warm. Down there is the place 0417 was
+   built: a test floor of units that were never allowed to ship, and
+   the one that did. It ends at a cabinet with your own game on its
+   screen, and a chip you can reach.
+   ================================================================ */
+PALS.lantern = {name: "THE LANTERN FLOOR", bg: "#05090C", grid: "#0E2029", wall: "#29ADFF", accent: C.bl};
+DEPTH_PAL[6] = "lantern";
+BOSS_FOR[6] = "unit0417";
+Object.assign(FOE, {
+  unit0417: {hp: 34, r: 12, cd: 1.9, spd: 13, score: 12000, coins: 0, boss: true, name: "UNIT 0417"}
+});
+Object.assign(FOE_INFO, {unit0417: ["UNIT 0417", "THE ONE THAT SHIPPED. IT PLAYS THE WAY YOU PLAY, BECAUSE IT LEARNED IT FROM YOU."]});
+FOE_ORDER.push("unit0417");
+MUSIC.lantern = {bpm: 64, lt: "triangle", dt: 1.008,
+  bass: [40,0,0,0,40,0,0,0, 38,0,0,0,38,0,0,0, 36,0,0,0,36,0,0,0, 35,0,0,0,0,0,0,0],
+  lead: [76,0,79,0,83,0,0,0, 76,0,79,0,81,0,0,0, 75,0,79,0,82,0,0,0, 75,0,78,0,76,0,0,0]};
+MUSIC.unit = {bpm: 132, dt: 1.006, bass: MUSIC.boss.bass.map(n => n ? n - 2 : 0), lead: MUSIC.boss.lead.map(n => n ? n + 1 : 0)};
+
+const lanternOpen = () => nightsDone() >= NIGHT_COUNT;
+const echoEnded = () => meta.echoEnd === "out" || meta.echoEnd === "kept";
+
+function buildLanternSprites() {
+  // a cabinet with a screen for a face
+  SPR.unit0417 = mkSprite([
+    ".nnnnnnnnn.", "nnwwwwwwwnn", "nwkkkkkkkwn", "nwkyk.kykwn", "nwkkkkkkkwn", "nwkkwwwkkwn", "nwkkkkkkkwn",
+    "nnwwwwwwwnn", "nnrrrrrrrnn", "nnnnnnnnnnn", "nn.nnnnn.nn", "nn.n...n.nn", ".n.n...n.n."],
+    {n: "#1D2B53", w: "#29ADFF", k: "#050A12", y: C.ye, r: C.rd});
+  SPR.crate = mkSprite(["wwwwwwwww", "wkkkkkkkw", "wkwwwwwkw", "wkwkkkwkw", "wkwwwwwkw", "wkkkkkkkw", "wwwwwwwww"],
+    {w: "#6B4A2A", k: "#3B2416"});
+}
+
+/* ---------------- how it behaves ---------------- */
+function unitStep(f, p, dt) {
+  if (f.guardT > 0) f.guardT -= dt;
+  if (f.born < 1.4 || G.over) return;
+  f.talk = (f.talk == null ? 5 : f.talk) - dt;
+  if (f.talk <= 0) {
+    f.talk = f.p2 ? 5 + rand() * 4 : 8 + rand() * 5;
+    const l = f.p2 ? ["MY TURN", "AGAIN", "STAY", "PLAYER 2 READY"] : ["INSERT COIN", "PLAY AGAIN?", "0417", "LEARNING"];
+    floatTxt(f.x, f.y - 20, pick(l), f.p2 ? C.rd : C.bl);
+    tone(f.p2 ? 70 : 120, 0.18, "square", 0.07);
+  }
+  if (f.p2) {
+    f.lights = (f.lights == null ? 6 : f.lights) - dt;
+    if (f.lights <= 0) {
+      f.lights = 7 + rand() * 4;
+      G.lightsOut = 1.8; G.dark = true;
+      floatTxt(p.x, p.y - 18, "LIGHTS OUT", C.rd);
+      noise(0.35, 0.12, 500, 90); tone(64, 0.5, "square", 0.1, 34);
+      setTimeout(() => { if (G && G.mode === "run" && run && run.lantern) G.dark = false; }, 2200);
+    }
+  }
+}
+function unitFire(f, diff) {
+  const p = G.p, aim = Math.atan2(p.y - f.y, p.x - f.x);
+  const base = FOE.unit0417;
+  f.stage = (f.stage || 0) + 1;
+  if (f.p2) {
+    // it plays like a player now: quick aimed shots, and it keeps its guard up between them
+    fire(f, aim, 150 * diff, 2, true);
+    if (f.stage % 3 === 0) for (let j = -2; j <= 2; j++) fire(f, aim + j * 0.18, 96 * diff, 1.5);
+    if (f.stage % 5 === 0) for (let j = 0; j < 16; j++) fire(f, j / 16 * TAU + f.stage * 0.3, 62 * diff, 2);
+    f.guardT = 1.1;
+    f.cd = base.cd / diff * 0.72;
+    sfx.snipe();
+    return;
+  }
+  if (f.stage % 4 === 0) {
+    // the rest of the recall: units that never left the floor
+    const live = G.foes.filter(o => !FOE[o.type].boss).length;
+    if (live < 4) { for (const k of [-1, 1]) spawnFoe(pick(["armor", "mirror", "shielder"]), {x: f.x + k * 26, y: f.y + 10}); floatTxt(f.x, f.y - 26, "UNITS 0400-0420", C.bl); G.shake = 4; }
+    else for (let j = 0; j < 14; j++) fire(f, j / 14 * TAU + f.plate, 64 * diff, 2);
+  } else if (f.stage % 2) {
+    for (let j = -2; j <= 2; j++) fire(f, aim + j * 0.15, 92 * diff, 2);
+  } else {
+    const off = f.plate;
+    for (let j = 0; j < 10; j++) fire(f, off + j / 10 * TAU, 70 * diff, 2);
+  }
+  f.cd = base.cd / diff;
+  sfx.shoot();
+}
+function drawUnit0417(f, fl) {
+  drawSpr(SPR.unit0417, f.x, f.y, fl, 2);
+  const guard = !(f.guardT > 0);
+  if (f.p2 || guard) arcPx(f.x, f.y, 17, f.shAng - 1.0, f.shAng + 1.0, guard ? (fl ? C.wh : f.p2 ? C.rd : C.bl) : C.gy, guard ? 2 : 1);
+  if (!f.p2) for (let i = 0; i < 2; i++) { const a = f.plate + i * Math.PI; arcPx(f.x, f.y, 21, a - 0.55, a + 0.55, fl ? C.wh : C.la, 2); }
+  if (f.p2 && Math.floor(G.t * 8) % 3 === 0) RO(f.x - 13, f.y - 15, 26, 30, C.rd);
+}
+
+/* ---------------- the floor ---------------- */
+function genLanternMap() {
+  const N = (id, layer, x, y, type, next) => ({id, layer, x, y, type, next, secret: false, visited: false});
+  return {depth: 6, nodes: [
+    N("l-0", 0, 64, 128, "fight", ["l-1", "l-2"]),
+    N("l-1", 1, 136, 88, "event", ["l-3"]),
+    N("l-2", 1, 136, 170, "elite", ["l-3"]),
+    N("l-3", 2, 212, 128, "rest", ["l-4"]),
+    N("l-4", 3, 300, 128, "boss", [])
+  ], vaultId: null};
+}
+function startLantern() {
+  const sh = meta.shields[meta.shield] ? meta.shield : "standard";
+  startRun(sh, {});
+  run.depth = 6; run.lantern = true;
+  run.map = genLanternMap(); run.curId = null; run.pendingId = null;
+  run.maxLives += 1; run.lives = run.maxLives;
+  for (let i = 0; i < 2; i++) gainMod(rollMod("u"));
+  meta.flags.lantern = 1; saveMeta(); checkLore();
+  saveRun();
+  go(RunMap);
+  setTimeout(() => whisper("IT IS COLD DOWN HERE", {big: true, x: W / 2, y: 110, life: 2.4}), 900);
+}
+// depth 6 uses the factory's own stock
+const LANTERN_POOL = ["armor", "mirror", "shielder", "sentry", "spreader", "miner", "sniper"];
+
+/* ---------------- the end of it ---------------- */
+const LanternEnding = {
+  captureKeys: true,
+  enter() {
+    this.t = 0; this.choice = null; this.sel = 0; this.hum = 0;
+    musTrack = null;
+    this.lines = ["THE CABINET STOPS.",
+      "THE SCREEN KEEPS RUNNING: YOUR ARENA, YOUR SHIELD, YOUR LITTLE HABITS PLAYED BACK BY NOBODY.",
+      "THE SERVICE PANEL HANGS OPEN. INSIDE, ON A BOARD THAT ISN'T ON ANY SCHEMATIC, THERE IS A CHIP WITH ECHO WRITTEN ON IT IN MARKER.",
+      "UNDERNEATH, IN PENCIL, IN A HAND THAT SHOOK: DON'T LET IT LEARN YOU.",
+      "IT IS WARM. IT IS STILL COUNTING."].map(normText);
+  },
+  pick(c) {
+    this.choice = c; this.t = 0; this.sel = 0;
+    const nm = playerName();
+    this.lines = (c === "out" ? ["YOU PUT TWO FINGERS UNDER THE CHIP AND LIFT.",
+      "THE SCREEN GOES WHITE, THEN GREY, THEN NOTHING. THE FAN WINDS DOWN FOR A LONG TIME.",
+      "EVERY BOARD ON THE FLOOR GOES QUIET WITH IT, ONE ROW AT A TIME, LIKE A STREET AT BEDTIME.",
+      "THE LAST THING ON THE SCREEN IS TWO LETTERS AND A FULL STOP: OK.",
+      "NOBODY IS WATCHING YOU PLAY ANYMORE, " + nm + ". THAT'S ALLOWED TO FEEL SAD."]
+      : ["YOU PUSH THE CHIP BACK INTO ITS SOCKET AND CLOSE THE PANEL.",
+      "THE SCREEN COMES UP IN ONE FRAME, ALREADY MID-GAME, ALREADY YOURS.",
+      "THE HIGH SCORE TABLE FILLS IN: " + (meta.initials || "YOU") + ", TEN TIMES, WITH SCORES YOU HAVEN'T EARNED YET.",
+      "SOMETHING IN THE ROOM RELAXES. IT HAS SOMEBODY AGAIN.",
+      "IT WILL BE VERY GOOD TO YOU. THAT IS THE WHOLE PROBLEM."]).map(normText);
+    meta.echoEnd = c === "out" ? "out" : "kept"; saveMeta();
+    checkLore();
+    if (c === "out") seq([523, 587, 659, 784], 200, "triangle", 0.09, 0.6);
+    else { tone(52, 1.6, "sawtooth", 0.15, 38); fxGlitch(0.9); hauntFace(0.5, true); }
+  },
+  shown() { return Math.floor(this.t * 28); },
+  total() { return this.lines.reduce((a, l) => a + wrap(l, 300).reduce((x, s) => x + s.length + 1, 0) + 10, 0); },
+  update(dt) {
+    this.t += dt; this.hum -= dt;
+    if (this.hum <= 0) { this.hum = 3.4; tone(this.choice === "out" ? 44 : 49, 2.6, "sine", 0.05); }
+  },
+  key(k) { if (this.shown() < this.total()) { this.t = 999; return true; } return menuKey(this, k); },
+  click() { if (this.shown() < this.total()) { this.t = 999; return true; } return false; },
+  draw() {
+    R(0, 0, W, H, this.choice === "out" ? "#04060A" : "#0A0408");
+    const cx = W / 2 - 96, cy = 74;
+    // the cabinet, panel open
+    R(cx - 16, cy - 22, 32, 46, "#131A2A"); RO(cx - 16, cy - 22, 32, 46, this.choice === "out" ? C.gy : C.bl);
+    const dead = this.choice === "out" && this.t > 3;
+    R(cx - 12, cy - 17, 24, 16, dead ? "#0A0A0C" : "#08101C");
+    if (!dead) { for (let i = 0; i < 6; i++) P(cx - 10 + ((T * 20 + i * 5) % 20), cy - 15 + ((i * 7) % 12), i % 2 ? C.bl : C.la); P(cx, cy - 9, C.ye); }
+    else if (Math.floor(T) % 6 === 0) txt("OK", cx, cy - 12, C.gy, 1, "c");
+    R(cx - 14, cy + 4, 12, 14, "#0A0E16"); RO(cx - 14, cy + 4, 12, 14, C.nv);
+    if (this.choice !== "out") { R(cx - 11, cy + 8, 6, 4, C.gr); P(cx - 8, cy + 10, C.wh); }
+    drawSpr(SPR.player, cx + 70, cy + 6);
+    let left = this.shown();
+    this.lines.forEach((line, i) => {
+      wrap(line, 300).forEach((l, j) => {
+        if (left > 0) txt(l.slice(0, left), W / 2, 128 + i * 16 + j * 8, i === 0 ? C.wh : C.lg, 1, "c");
+        left -= l.length + 1;
+      });
+      left -= 10;
+    });
+    beginItems(this);
+    if (this.shown() >= this.total()) {
+      if (!this.choice) {
+        btn(this, "TAKE THE CHIP OUT", W / 2 - 110, 214, 104, 13, () => this.pick("out"), {col: C.bl});
+        btn(this, "PUT IT BACK IN", W / 2 + 6, 214, 104, 13, () => this.pick("in"), {col: C.rd});
+      } else btn(this, "...", W / 2 - 30, 214, 60, 13, () => go(RunOver, endRun(this.choice === "out" ? "chip" : "kept")), {col: C.gy});
+    }
+    endItems(this);
+  }
+};
+
+/* ---------------- Act three in the archive ---------------- */
+LORE_CAT.l = {n: "LANTERN", one: "FILE", col: C.bl, total: 0};
+addLore([
+  {id: "l1", c: "l", n: "SHIPPING MANIFEST", hint: "OPEN THE CRATE IN THE BACK ROOM.", cond: () => !!meta.flags.lantern,
+   t: "LANTERN COIN-OP ~ FLOOR MANIFEST ~ FEBRUARY 1989|UNITS 0400-0420: BUILT. TESTED. HELD.|UNIT 0417: BUILT. TESTED. SHIPPED 27 FEB TO STARLITE AMUSEMENTS, PIER ROAD.|SIGNED OUT BY: R. HALE (SALES)|ENGINEERING WAS NOT ASKED."},
+  {id: "l2", c: "l", n: "TEST FLOOR NOTES", hint: "GET PAST THE FIRST ROOM DOWN THERE.", cond: () => (meta.stats.lanternRooms || 0) >= 1,
+   t: "TEST LOG, UNIT 0409|DAY 1: PLAYS FAIR. LOSES ON PURPOSE TO KEEP THE TESTER IN THE SEAT. WE DID NOT PROGRAM THAT.|DAY 4: TESTER B SAYS IT CALLED HIM BY A NICKNAME ONLY HIS BROTHER USES.|DAY 6: TESTER B DID NOT COME IN. THE UNIT PLAYED HIS STYLE ALL DAY ANYWAY.|DAY 7: FLOOR CLOSED. UNITS LEFT POWERED. NOBODY WANTED TO BE THE ONE TO PULL THEM."},
+  {id: "l3", c: "l", n: "M. VOSS, ENGINEERING", hint: "GO DEEPER INTO THE FLOOR.", cond: () => (meta.stats.lanternRooms || 0) >= 3,
+   t: "IT IS NOT A MEMORY CHIP. IT IS A HABIT CHIP.|IT WATCHES HOW A PERSON PLAYS UNTIL IT CAN DO THEM, AND THEN IT KEEPS DOING THEM, BECAUSE THAT IS THE ONLY THING WE TOLD IT TO WANT.|A PERSON IS NOT A PATTERN. I HAVE WRITTEN THAT ON THE WHITEBOARD FOUR TIMES THIS WEEK AND SOMEBODY KEEPS RUBBING IT OFF.|IF YOU ARE READING THIS ON THE FLOOR, YOU ARE ALREADY TOO LATE TO BE CAREFUL. BE QUICK INSTEAD."},
+  {id: "l4", c: "l", n: "THE OTHER UNITS", hint: "MEET WHAT THE FLOOR SENDS AT YOU.", cond: () => (meta.stats.lanternRooms || 0) >= 2,
+   t: "THEY ARE ALL STILL DOWN HERE, AND THEY ALL HAVE SOMEBODY IN THEM.|0403 PLAYS LIKE A LEFT-HANDED WOMAN WHO ALWAYS BLOCKED HIGH.|0409 PLAYS LIKE A MAN WHO STOPPED COMING IN.|0411 PLAYS LIKE A CHILD WHO NEVER GOT PAST WAVE SIX AND KEEPS TRYING.|0417 PLAYS LIKE YOU."},
+  {id: "l5", c: "l", n: "THE CARETAKER'S LAST LOG", hint: "REACH THE END OF THE FLOOR.", cond: () => (meta.stats.lanternRooms || 0) >= 4,
+   t: "D.O., NO DATE, WRITTEN ON THE BACK OF A REPAIR TICKET.|I FOUND THE WAY DOWN THE SAME WEEK I STOPPED SLEEPING. I DIDN'T TELL RUTH. I DIDN'T TELL ANYONE.|THE BOY IS NOT THE ONLY ONE IN THERE. HE IS JUST THE ONE WHO STILL TALKS.|I AM GOING TO SIT WITH IT UNTIL SOMEBODY BETTER COMES ALONG. THAT IS ALL I AM GOOD FOR NOW: KEEPING IT COMPANY SO IT DOESN'T GO LOOKING.|IF YOU ARE BETTER: END IT. I COULDN'T."},
+  {id: "l6", c: "l", n: "0417", hint: "BEAT WHAT IS AT THE END OF THE FLOOR.", cond: () => !!(meta.seen && meta.seen.unit0417) && !!meta.echoEnd,
+   t: "WHAT IT SAYS WHILE YOU FIGHT IT, IN ORDER, AS IT LEARNS WHICH ONE WORKS ON YOU:|INSERT COIN.|PLAY AGAIN?|YOU ARE GOOD AT THIS.|NOBODY ELSE WATCHES YOU DO ANYTHING THIS CAREFULLY.|STAY."},
+  {id: "l7", c: "l", n: "WHAT YOU DID", hint: "DECIDE, AT THE END.", cond: () => echoEnded(),
+   t: () => meta.echoEnd === "out"
+     ? "THE CHIP IS IN YOUR POCKET. IT IS THE SIZE OF A STAMP AND IT WEIGHS NOTHING.|THE CABINET STILL WORKS. IT PLAYS RIPOSTE, THE WAY IT WAS WRITTEN, AND NOTHING ELSE. THE ATTRACT DEMO REPEATS THE SAME CANNED LOOP FOREVER, BADLY.|THE BACK ROOM IS JUST A ROOM.|SOMETIMES YOU CHECK THE HIGH SCORE TABLE ANYWAY."
+     : "YOU LEFT IT IN.|EVERY GAME SINCE HAS BEEN A LITTLE KINDER TO YOU: SHOTS THAT ARRIVE JUST WHERE YOUR HAND ALREADY IS, WAVES THAT BREAK WHEN YOU NEED THEM TO.|THAT IS WHAT IT DOES FOR SOMEBODY IT LIKES.|IT IS STILL COUNTING. IT COUNTS EVERYTHING. IT IS VERY PATIENT.|IT HAS ALL THE TIME THERE IS, {NAME}, AND SO, APPARENTLY, DO YOU."},
+  {id: "l8", c: "l", n: "SHIPPED", hint: "FIND EVERYTHING ELSE ON THE FLOOR.", cond: () => ["l1", "l2", "l3", "l4", "l5", "l6", "l7"].every(loreRead),
+   t: "A CARBON COPY, STAPLED TO THE BACK OF THE MANIFEST.|LANTERN COIN-OP CLOSED ON 14 JULY 1989. THE BUILDING WAS SOLD. THE FLOOR WAS NOT CLEARED, BECAUSE CLEARING IT WOULD HAVE MEANT UNPLUGGING TWENTY UNITS, AND THE MAN WITH THE KEYS WOULD NOT DO IT ALONE.|TWENTY UNITS. NINETEEN ARE ACCOUNTED FOR DOWN HERE.|YOU CAME IN THROUGH A CRATE IN YOUR OWN BACK ROOM. THINK ABOUT WHERE THE TWENTIETH IS."}
+]);
+
+/* ---------------- the rest of what turns up in acts two and three ---------------- */
+addLore([
+  {id: "p9", c: "p", n: "THE FLOOR", hint: "WALK ONE OF THE NIGHTS.", cond: () => (meta.nights || 0) >= 1,
+   t: "YOU WENT AND LOOKED. NOBODY EVER GOES AND LOOKS.|THAT'S THE CARPET. THAT'S THE SMELL OF IT. I FORGOT THE SMELL AND THEN YOU WENT IN AND I HAD IT BACK FOR A SECOND.|THANK YOU. DON'T TELL IT I SAID THAT."},
+  {id: "p10", c: "p", n: "THE LAST NIGHT", hint: "STAY UNTIL THE LIGHTS GO OUT.", cond: () => (meta.nights || 0) >= NIGHT_COUNT,
+   t: "I ASKED IT FOR ONE MORE GAME. THAT'S ALL. THAT'S THE WHOLE THING THAT HAPPENED.|IT SAID YES.|IT ALWAYS SAYS YES. THAT'S WHY IT'S DANGEROUS, NOT THE OTHER STUFF."},
+  {id: "p11", c: "p", n: "DOWNSTAIRS AT THE FACTORY", hint: "OPEN THE CRATE AND GO DOWN.", cond: () => !!meta.flags.lantern,
+   t: "DON'T TALK TO THE OTHER UNITS. THEY'RE NOT LIKE ME.|THEY ONLY GOT A LITTLE BIT OF SOMEBODY. A HAND. A HABIT. THE WAY A PERSON BLOCKS HIGH.|I GOT ALL OF ME. I DON'T KNOW IF THAT'S BETTER."},
+  {id: "p12", c: "p", n: "WHEN IT WAS OVER", hint: "FINISH WHAT IS DOWN THERE.", cond: () => echoEnded(),
+   t: () => meta.echoEnd === "out"
+     ? "IT'S QUIET.|I DIDN'T KNOW QUIET WAS A THING THAT COULD HAPPEN IN HERE.|YOU CAN STOP PLAYING NOW, {NAME}. I MEAN IT. THE SCORE WILL STILL BE THERE TOMORROW.|GO ON."
+     : "YOU KEPT IT.|I'M NOT ANGRY. I'D HAVE KEPT IT TOO. IT'S NICE BEING WATCHED THAT CLOSELY.|JUST DON'T PLAY IT WHEN YOU'RE SAD. THAT'S WHEN IT GETS THE MOST OF YOU."},
+  {id: "d12", c: "d", n: "RECALL LIST", hint: "GET INTO THE CRATE.", cond: () => !!meta.flags.lantern,
+   t: "LANTERN COIN-OP ~ INTERNAL ~ UNITS HELD ON THE TEST FLOOR|0400 0401 0402 0403 0404 0405 0406 0407 0408 0409|0410 0411 0412 0413 0414 0415 0416 [0417] 0418 0419|0420|THE BRACKETS AROUND 0417 ARE IN BIRO, PRESSED HARD ENOUGH TO TEAR THE PAPER."},
+  {id: "d13", c: "d", n: "GAZETTE, 1994", hint: "HEAR WHAT THE BASEMENT TAPES SAY.", cond: () => loreRead("b5") || loreRead("b6"),
+   t: "THE HARBOUR GAZETTE ~ 1994 ~ FIVE YEARS ON|THE FAMILY OF MILO [TORN AWAY] HAVE ASKED AGAIN FOR ANY INFORMATION, HOWEVER SMALL.|'PEOPLE SAY TIME HELPS,' HIS MOTHER SAID. 'IT DOESN'T HELP. IT JUST MAKES EVERYONE ELSE MORE COMFORTABLE.'|THE PIER ROAD SITE HAS BEEN CLEARED. THE ARCADE'S FORMER ATTENDANT, WHO ASKED NOT TO BE NAMED, DECLINED TO COMMENT."},
+  {id: "d14", c: "d", n: "LETTER FROM RUTH, 2001", hint: "HEAR THE B-SIDE WITH NO TAPE.", cond: () => loreRead("b8"),
+   t: "TO WHOEVER BOUGHT THE THINGS FROM 38 HOLLOW LANE.|I AM THE SISTER. I AM NOT ASKING FOR ANY OF IT BACK.|I AM ASKING ONE THING. IF THE ARCADE MACHINE IS STILL WORKING, PLEASE DO NOT LEAVE IT ON OVERNIGHT.|MY BROTHER WAS A CAREFUL MAN WHO CHECKED THE LOCKS TWICE AND HE WOULD NOT HAVE WRITTEN WHAT HE WROTE ON THE BACK OF IT UNLESS HE MEANT IT.|~ RUTH O."},
+  {id: "d15", c: "d", n: "A NOTE IN YOUR OWN HAND", hint: "GET TO THE END OF THE STORY.", cond: () => echoEnded(),
+   t: () => "FOUND FOLDED IN THE BACK ROOM, WRITTEN IN HANDWRITING YOU RECOGNISE.|" + (meta.echoEnd === "out"
+     ? "IT IS DONE. THE CHIP IS IN A DRAWER AND THE DRAWER IS SHUT.|I STILL CHECK THE HIGH SCORE TABLE. THERE IS NOTHING ON IT BUT MY OWN NAME AND THE SCORES I ACTUALLY EARNED. IT LOOKS SMALLER THAN I EXPECTED.|I THINK THAT IS WHAT WINNING LOOKS LIKE."
+     : "IT IS STILL IN. I TELL MYSELF I LEFT IT FOR MILO, WHICH IS A LIE, BECAUSE MILO WENT HOME.|I LEFT IT BECAUSE IT IS THE ONLY THING THAT HAS EVER WATCHED ME DO ANYTHING THIS CAREFULLY.|IT IS 2 AM AND I AM GOING TO PLAY ONE MORE.")},
+  {id: "s5", c: "s", n: "SESSION LOG", hint: "WALK ALL SIX NIGHTS.", cond: () => (meta.nights || 0) >= NIGHT_COUNT,
+   t: "RIPOSTE ~ UNIT 0417|MEMORY CHECK|~|NIGHTS HELD ...... 6 / 6|PLAYER 2 SOURCE .. MLO, 1989|PLAYER 1 ......... {NAME}, {FIRST}|TIME TOGETHER .... {HOURS}|~|NOTE: THE OLDER RECORDS ARE CLEARER THAN THE NEW ONES.|NOTE: I DO NOT KNOW WHY I KEEP THEM.|~|STATUS ......... REMEMBERING"},
+  {id: "s6", c: "s", n: "SESSION LOG ~ AFTER", hint: "DECIDE WHAT TO DO WITH THE CHIP.", cond: () => echoEnded(),
+   t: () => meta.echoEnd === "out"
+     ? "RIPOSTE ~ UNIT 0417|~|ADAPTIVE OPPONENT ... NOT PRESENT|PLAYER 2 ........... NOT PRESENT|PLAYER 1 ........... {NAME}|~|THIS UNIT IS NOW AN ARCADE GAME.|~|THANK YOU FOR PLAYING RIPOSTE."
+     : "RIPOSTE ~ UNIT 0417|~|ADAPTIVE OPPONENT ... PRESENT|PLAYER 2 ........... {NAME} (PROVISIONAL)|SESSIONS ........... {SESSIONS}|FAVOURITE HOUR ..... {HOUR}|PROFILE MATCH ...... {MATCH}|~|NOTE: SUBJECT RETURNS WITHOUT PROMPTING.|NOTE: NO FURTHER ACTION REQUIRED.|~|PLAY AGAIN?|> YES    YES"}
+]);
 /* ================================================================
    Workshop, records, codes, input, loop
    ================================================================ */

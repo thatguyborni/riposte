@@ -116,7 +116,7 @@ function drawModFx() {
   });
   if (p.whirlT > 0) ringDots(p.x, p.y, 13, C.ye, 2);
   for (const f of G.foes) {
-    if (f.stun > 0) for (let k = 0; k < 3; k++) { const a = G.t * 5 + k * TAU / 3; P(f.x + Math.cos(a) * (f.r + 3), f.y - f.r - 3 + Math.sin(a) * 1.5, C.ye); }
+    if (f.stun > 0 && SCARE.freeze <= 0) for (let k = 0; k < 3; k++) { const a = G.t * 5 + k * TAU / 3; P(f.x + Math.cos(a) * (f.r + 3), f.y - f.r - 3 + Math.sin(a) * 1.5, C.ye); }
     else if (f.slowT > 0 && blink) ringDots(f.x, f.y, f.r + 3, C.bl, 4);
     if (S.spotter && !f.dormant && f.born > 0.6 && FOE[f.type].cd < 50 && f.type !== "furnace" && f.cd > 0 && f.cd < 0.4)
       ringDots(f.x, f.y, f.r + 4 + f.cd * 12, C.wh, 3);

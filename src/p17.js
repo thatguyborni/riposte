@@ -60,10 +60,21 @@ function tapeEarned(i) {
   }
   return false;
 }
+const TAPE_GAP = 6 * 60;     // seconds of play between tapes turning up
 function checkTapes() {
   if (!meta.tapesDue) meta.tapesDue = {};
+  if (!meta.flags) meta.flags = {};
   let fresh = 0;
-  for (let i = 1; i <= TAPE_COUNT; i++) if (!meta.tapesDue[i] && !tapeRead(i) && tapeEarned(i)) { meta.tapesDue[i] = 1; fresh++; }
+  // one tape at a time, with play in between: the story should outlast the first sitting
+  const waited = (meta.playTime || 0) - (meta.flags.tapeAt || 0) >= TAPE_GAP;
+  for (let i = 1; i <= TAPE_COUNT; i++) {
+    if (meta.tapesDue[i] || tapeRead(i) || !tapeEarned(i)) continue;
+    const last = i === TAPE_COUNT;                               // the last one is already gated behind all the others
+    if (!last && dueTapes().length + fresh > 0) break;           // never more than one waiting
+    if (!last && !waited && tapesRead() >= 2) break;             // the first two come quickly, then it slows
+    meta.tapesDue[i] = 1; fresh++;
+    meta.flags.tapeAt = meta.playTime || 0;
+  }
   if (fresh) {
     saveMeta();
     setTimeout(() => toast(fresh > 1 ? fresh + " TAPES WERE LEFT IN THE BACK ROOM." : "A TAPE WAS LEFT IN THE BACK ROOM.", C.pl), 700);
@@ -73,6 +84,8 @@ function checkTapes() {
 
 /* ---------------- how haunted are we ---------------- */
 function hauntLevel() {
+  if (meta.echoEnd === "out") return 0;          // the chip is in your pocket
+  if (meta.echoEnd === "kept") return 5;         // you left it in, and it noticed
   if (meta.milo === "free") return 0;
   if (meta.milo === "stay") return 5;
   const n = tapesRead();
@@ -80,7 +93,7 @@ function hauntLevel() {
 }
 const hauntMode = () => meta.settings.haunt == null ? 2 : meta.settings.haunt;   // 0 off, 1 subtle, 2 full
 const haunted = lv => hauntMode() > 0 && hauntLevel() >= (lv || 1);
-const scaresOn = () => hauntMode() === 2 && fxScale() > 0;
+const scaresOn = () => hauntMode() >= 2 && fxScale() > 0;
 
 /* phantom high score: always just out of reach */
 function phantomEntry() {
@@ -140,6 +153,7 @@ function hauntTick(dt) {
   }
   if (inCombat() && G && G.mode !== "attract" && isNight() && !(meta.flags && meta.flags.lateNight)) { if (!meta.flags) meta.flags = {}; meta.flags.lateNight = 1; }
   for (let i = WHISPERS.length - 1; i >= 0; i--) { WHISPERS[i].t += dt; if (WHISPERS[i].t > WHISPERS[i].life) WHISPERS.splice(i, 1); }
+  scareTick(dt);
   if (FACE.t > 0) FACE.t -= dt;
   const h = hauntLevel();
   if (!h || hauntMode() === 0) return;
@@ -160,6 +174,7 @@ function hauntTick(dt) {
   }
 }
 function drawHauntOverlay() {
+  drawScareFx();
   if (FACE.t > 0 && SPR.face) {
     const k = FACE.t / FACE.max, a = FACE.a * Math.sin(Math.PI * (1 - k));
     L.globalAlpha = Math.max(0, a);

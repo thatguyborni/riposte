@@ -27,6 +27,7 @@ const HubScene = {
     const FIG = [[362, 66], [330, 96], [262, 150], [214, 118]];
     this.fig = haunted(2) && meta.flags && meta.flags.crash1 ? FIG[Math.min(3, Math.max(0, h - 2))] : null;
     this.figGone = false; this.lightsT = 8 + rand() * 12; this.dark = 0; this.winT = 6 + rand() * 10; this.winFig = 0; this.p2T = 0;
+    this.tvOn = 0; this.cabOn = 0;
     this.posterName = haunted(4) && scaresOn() && rand() < 0.35;
     music(meta.milo === "free" ? "map" : haunted(3) ? "basement" : "map");
     if (!meta.hubSeen) { meta.hubSeen = true; saveMeta(); this.dialog = {who: null, text: "THE BACK ROOM. " + ctl("WALK UP TO THINGS AND PRESS ENTER.", "WALK UP TO THINGS AND PRESS A.", "DRAG ANYWHERE TO WALK. TAP THINGS (OR PRESS USE) TO USE THEM. THE X IN THE CORNER LEAVES.") + " EVERYTHING BEHIND THE CABINET LIVES HERE."}; }
@@ -47,6 +48,10 @@ const HubScene = {
     out.push({id: "cork", n: "CORKBOARD", hint: dueLore("d").length ? "SOMETHING NEW IS PINNED UP" : docs ? docs + " PAPER" + (docs > 1 ? "S" : "") : "EMPTY", x: 355, y: 60, box: [334, 20, 42, 24], act: () => this.useCork()});
     if (dueLore("s").length) out.push({id: "receipt", n: "A RECEIPT", hint: "THE CABINET PRINTED IT BY ITSELF", x: 332, y: 76, box: [327, 58, 8, 16], act: () => go(LoreScene, {id: dueLore("s")[0], from: HubScene})});
     out.push({id: "poster", n: "POSTER", hint: haunted(2) ? "MISSING" : "RIPOSTE", x: 280, y: 60, box: [270, 22, 20, 18], act: () => this.usePoster()});
+    if (lanternOpen()) out.push({id: "crate", n: "THE CRATE", hint: meta.echoEnd ? "EMPTY NOW" : "LANTERN COIN-OP. IT IS STILL WARM.", x: 108, y: 200, box: [96, 196, 24, 18],
+      act: () => this.useCrate()});
+    if (starliteOpen()) out.push({id: "side", n: "THE SIDE DOOR", hint: nightsDone() >= NIGHT_COUNT ? "IT ONLY GOES TO AN EMPTY LOT NOW" : "IT SMELLS LIKE 1989 THROUGH THERE",
+      x: 26, y: 104, box: [8, 82, 16, 30], act: () => go(nightsDone() >= NIGHT_COUNT ? LotScene : StarliteScene)});
     if (basementOpen()) out.push({id: "trap", n: "TRAPDOOR", hint: meta.milo === "free" ? "IT'S QUIET DOWN THERE NOW" : "IT GOES DOWN", x: 300, y: 196, box: [288, 186, 24, 16], act: () => this.enterBasement()});
     if (meta.milo === "free") out.push({id: "milo", n: "MILO", hint: "THE LAST PLAYER", x: 282, y: 124, box: [277, 112, 10, 14], act: () => this.talkMilo()});
     for (const n of NPCS) if (npcHere(n.id)) {
@@ -54,6 +59,14 @@ const HubScene = {
       out.push({id: n.id, n: n.n, hint: n.role, x, y: y + 4, box: [x - 5, y - 6, 10, 14], npc: n, act: () => this.talk(n)});
     }
     return out;
+  },
+  useCrate() {
+    if (meta.echoEnd) { this.dialog = {who: null, text: "AN EMPTY WOODEN CRATE WITH A STENCIL ON THE SIDE. THE STRAW INSIDE IS STILL PRESSED INTO THE SHAPE OF SOMETHING."}; return; }
+    const r = loadRun();
+    if (r && !r.lantern) { this.dialog = {who: null, text: "FINISH WHAT YOU STARTED FIRST. THE CRATE ISN'T GOING ANYWHERE."}; return; }
+    if (r && r.lantern) { run = r; go(RunMap); return; }
+    fxGlitch(0.7); sfxGlitch(true);
+    startLantern();
   },
   useCork() {
     const due = dueLore("d");
@@ -114,6 +127,8 @@ const HubScene = {
       return;
     }
     if (this.dark > 0) this.dark -= dt;
+    if (this.tvOn > 0) this.tvOn -= dt;
+    if (this.cabOn > 0) this.cabOn -= dt;
     if (haunted(3) && scaresOn()) {
       this.lightsT -= dt;
       if (this.lightsT <= 0) { this.lightsT = 12 + rand() * 18; this.dark = 0.12 + rand() * 0.2; noise(0.15, 0.05, 120, 60); }
@@ -239,7 +254,14 @@ const HubScene = {
     if (glow("archive")) RO(198, 20, 48, 50, glow("archive"));
     // daily cabinet
     R(300, 26, 28, 46, "#241A3A"); R(302, 30, 24, 16, "#000"); R(303, 31, 22, 14, Math.floor(T * 2) % 2 ? "#1A0F2A" : "#210F33");
-    if (haunted(2) && T % 9 < 1.2) txt("MLO", 314, 35, C.rd, 1, "c"); else txt("D", 311, 35, C.pk);
+    if (this.cabOn > 0 && scaresOn()) {
+      // it turned itself on, and someone is playing
+      R(303, 31, 22, 14, "#120A18");
+      const px = 314 + Math.round(Math.sin(T * 3) * 6), py = 40;
+      P(px, py, C.ye); P(px - 1, py, C.or); P(px + 1, py, C.or);
+      for (let i = 0; i < 3; i++) P(303 + ((T * 30 + i * 9) % 22), 34 + i * 3, C.rd);
+      if (Math.floor(T * 2) % 2) txt("MLO", 314, 33, C.rd, 1, "c");
+    } else if (haunted(2) && T % 9 < 1.2) txt("MLO", 314, 35, C.rd, 1, "c"); else txt("D", 311, 35, C.pk);
     R(304, 52, 20, 4, C.nv); P(308, 54, C.rd); P(318, 54, C.bl);
     if (dailyToday() && dailyToday().done) P(322, 48, C.li); else if (Math.floor(T * 3) % 2) P(322, 48, C.pk);
     if (glow("cab")) RO(298, 24, 32, 50, glow("cab"));
@@ -252,14 +274,32 @@ const HubScene = {
     // training dummy
     R(343, 150, 2, 14, "#6B3F22"); R(338, 140, 12, 12, "#8A6A3A"); R(341, 143, 2, 2, C.k); R(345, 143, 2, 2, C.k); R(336, 164, 16, 2, "#6B3F22");
     if (glow("dummy")) RO(334, 138, 20, 30, glow("dummy"));
-    // old TV
+    // old TV. sometimes it is on, and there is something in it
     R(22, 144, 34, 20, "#2A2438"); R(25, 147, 22, 14, "#000");
-    L.globalAlpha = 0.6; for (let i = 0; i < 6; i++) R(26 + rint(20), 148 + rint(12), 2, 1, C.lg); L.globalAlpha = 1;
+    if (this.tvOn > 0 && scaresOn()) {
+      R(25, 147, 22, 14, "#151119");
+      for (let i = 0; i < 26; i++) P(25 + rint(22), 147 + rint(14), rand() < 0.5 ? C.gy : C.lg);
+      if (SPR.face && Math.floor(this.tvOn * 3) % 2) { L.globalAlpha = 0.5; drawSpr(SPR.face, 36, 154, false, 0.6); L.globalAlpha = 1; }
+    } else { L.globalAlpha = 0.6; for (let i = 0; i < 6; i++) R(26 + rint(20), 148 + rint(12), 2, 1, C.lg); L.globalAlpha = 1; }
     R(50, 149, 3, 3, C.gy); R(50, 155, 3, 3, C.gy); R(30, 164, 2, 3, "#2A2438"); R(46, 164, 2, 3, "#2A2438");
     if (glow("tv")) RO(20, 142, 38, 26, glow("tv"));
+    // the side door: shut, until the basement is settled
+    if (starliteOpen()) {
+      R(8, 82, 16, 30, "#2A1A12"); RO(8, 82, 16, 30, "#6B3F22"); P(20, 97, C.ye);
+      const warm = nightsDone() >= NIGHT_COUNT ? C.gy : C.pe;
+      if (Math.floor(T * 1.5) % 2) { L.globalAlpha = 0.35; R(24, 84, 2, 26, warm); L.globalAlpha = 1; }
+      if (glow("side")) RO(6, 80, 20, 34, glow("side"));
+    }
     // door
     R(176, 224, 32, 16, "#3B2416"); R(176, 224, 32, 1, "#6B3F22"); P(202, 230, C.ye);
     if (glow("door")) RO(174, 222, 36, 14, glow("door"));
+    // the crate 0417 came in
+    if (lanternOpen()) {
+      drawSpr(SPR.crate, 108, 205, false, 2.6);
+      txt("0417", 108, 202, meta.echoEnd ? C.gy : C.bl, 1, "c");
+      if (!meta.echoEnd && Math.floor(T * 1.2) % 3 === 0) { L.globalAlpha = 0.4; R(99, 197, 18, 2, C.bl); L.globalAlpha = 1; }
+      if (glow("crate")) RO(94, 194, 28, 22, glow("crate"));
+    }
     // the trapdoor
     if (basementOpen()) {
       R(288, 188, 24, 14, "#0A0508"); RO(288, 188, 24, 14, "#3B2416");

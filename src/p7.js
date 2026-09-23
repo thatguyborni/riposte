@@ -90,7 +90,7 @@ function seedAttract() {
 }
 let lastInput = 0;
 const TitleScene = {
-  enter() { seedAttract(); music("title"); this.saved = loadRun(); lastInput = T; this.demo = false; hubReturn = false; checkTapes(); },
+  enter() { seedAttract(); music("title"); this.saved = loadRun(); lastInput = T; this.demo = false; hubReturn = false; checkTapes(); saveNudge(); },
   update(dt) {
     combatTick(dt);
     const idle = T - lastInput > 25;
@@ -162,6 +162,13 @@ const TitleScene = {
     y += gap;
     btn(this, "SETTINGS", bx, y, bw, 12, () => go(SettingsScene), {col: C.lg, dim: C.nv}); y += gap;
     if (window.rpQuit) btn(this, "QUIT", bx, y, bw, 12, powerOff, {col: C.gy, dim: C.nv});
+    if (SCARE.menuExtra > 0) {
+      y += gap;
+      btn(this, "CONTINUE (PLAYER 2)", bx, y, bw, 12, () => {
+        SCARE.menuExtra = 0; stinger(); hauntFace(0.5, true);
+        setTimeout(() => whisper("NOT YET", {big: true, x: W / 2, y: 120, life: 2.4}), 300);
+      }, {col: C.rd, dim: C.pl});
+    }
     endItems(this);
     if (!meta.tutorialDone && !meta.stats.runs && !meta.arcade.length && Math.floor(T * 2) % 2) txt("< NEW? TRAINING IS IN HERE", bx + bw + 6, tutY + 4, C.bl);
 
@@ -173,6 +180,8 @@ const TitleScene = {
     txt("DEEPEST", 12, 156, C.gy); txt(meta.stats.bestDepth ? "DEPTH " + meta.stats.bestDepth : "-", 12, 163, C.wh);
     if (allFragments() && !meta.secrets.echo && Math.floor(T * 2) % 2) txt("THE SIGNAL IS COMPLETE", W / 2, 206, C.pk, 1, "c");
     txt("TROPHIES", 12, 178, C.gy); txt(achCount() + "/" + ACH.length, 12, 185, C.ye);
+    const sh = saveHome();
+    txt("SAVE", W - 12, 90, C.gy, 1, "r"); txt(sh[0], W - 12, 97, sh[1], 1, "r");
     const DD = DIFFS[diffLevel()];
     txt("DIFFICULTY", 12, 200, C.gy); txt(DD.n, 12, 207, DD.col);
     txt(ctl("WASD MOVE  ~  MOUSE AIM  ~  SPACE PULSE  ~  SHIFT DASH", "L-STICK MOVE  ~  R-STICK AIM  ~  RT PULSE  ~  LT DASH", "LEFT THUMB MOVES  ~  RIGHT THUMB AIMS  ~  PULSE / DASH BUTTONS"), W / 2, 224, C.gy, 1, "c");
@@ -245,7 +254,8 @@ const ArcadeOver = {
   back() { go(TitleScene); },
   enter() {
     const D = DIFFS[G.dl != null ? G.dl : DIFF_NORMAL];
-    this.res = {score: Math.round(G.score * D.score), raw: G.score, dl: G.dl != null ? G.dl : DIFF_NORMAL, wave: G.wave, chain: G.bestChain, perf: G.perfects}; music("map");
+    this.res = {score: Math.round(G.score * D.score), raw: G.score, dl: G.dl != null ? G.dl : DIFF_NORMAL, wave: G.wave, chain: G.bestChain,
+      perf: G.perfects, caught: G.parries || 0, rate: perfRate(G.perfects, G.parries || 0)}; music("map");
     const ph = phantomEntry();
     if (ph && !ph.ghost2 && this.res.score > ph.s && meta.milo !== "stay" && haunted(2)) setTimeout(() => whisper("HE DIDN'T LIKE THAT"), 1200);
     const r = this.res;
@@ -274,8 +284,8 @@ const ArcadeOver = {
     title("GAME OVER", 40, C.rd);
     const r = this.res;
     const D = DIFFS[r.dl];
-    const rows = r.dl === DIFF_NORMAL ? [["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain], ["PERFECTS", r.perf]]
-      : [["POINTS", r.raw], [D.n, scoreMulText(D)], ["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain]];
+    const rows = r.dl === DIFF_NORMAL ? [["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain], ["CAUGHT", r.caught], ["PERFECT", r.perf + "  (" + r.rate + "%)"]]
+      : [["POINTS", r.raw], [D.n, scoreMulText(D)], ["SCORE", r.score], ["WAVE", r.wave], ["BEST CHAIN", "X" + r.chain], ["PERFECT", r.perf + "  (" + r.rate + "%)"]];
     rows.forEach((row, i) => { txt(row[0], W / 2 - 60, 74 + i * 12, C.gy); txt(String(row[1]), W / 2 + 60, 74 + i * 12, C.wh, 1, "r"); });
     txt("PLAYER: " + (typeof myName === "function" ? myName() : meta.initials), W / 2, 60, C.gy, 1, "c");
     if ((this.newBest || this.entry) && Math.floor(T * 2) % 2) txt(this.newBest ? "NEW PERSONAL BEST!" : "YOU MADE THE TOP 10", W / 2, 130, this.newBest ? C.ye : C.bl, 1, "c");
@@ -285,7 +295,10 @@ const ArcadeOver = {
     btn(this, "PLAY AGAIN", W / 2 - 50, y, 100, 12, () => go(ArcadeScene)); y += 15;
     btn(this, "TITLE", W / 2 - 50, y, 100, 12, () => go(TitleScene), {col: C.gy});
     endItems(this);
-    txt(pick0(TIPS_ARCADE, Math.floor(r.score / 7)), W / 2, 206, C.la, 1, "c");
+    // the thing most new players never find: catching late
+    if (r.caught >= 12 && r.rate < 12) wrap("CATCH LATE. LET THE SHOT ALMOST TOUCH YOU, THEN SNAP THE SHIELD ONTO IT: A PERFECT FLIES BACK TWICE AS FAST AND KEEPS YOUR CHAIN ALIVE.", 330)
+      .forEach((l, i) => txt(l, W / 2, 198 + i * 8, C.ye, 1, "c"));
+    else txt(pick0(TIPS_ARCADE, Math.floor(r.score / 7)), W / 2, 206, C.la, 1, "c");
   }
 };
 const TIPS_ARCADE = ["CATCH LATE, ON THE INNER LINE, FOR A PERFECT.", "A KILLING SHOT KEEPS GOING. LINE THEM UP.",

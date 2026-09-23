@@ -1,5 +1,5 @@
 "use strict";
-const VERSION = "4.7.0";
+const VERSION = "4.8.0";
 /* ================================================================
    RIPOSTE v3 — core: screen, font, sprites, audio, save
    ================================================================ */
@@ -500,6 +500,7 @@ function buildSprites() {
   SPR.i_shop = mkSprite(["...y...",".yyyyy.","yy.y...",".yyyyy.","...y.yy",".yyyyy.","...y..."], {y:C.ye});
   SPR.i_event = mkSprite([".lllll.","ll...ll",".....ll","...lll.","...l...",".......","...l..."], {l:C.la});
   if (typeof buildHorrorSprites === "function") buildHorrorSprites();
+  if (typeof buildLanternSprites === "function") buildLanternSprites();
   SPR.i_altar = mkSprite(["...p...","..ppp..","...p...",".lllll.","..lpl..","..lll..",".lllll."], {p:C.pk, l:C.la});
   SPR.i_vault = mkSprite(["...w...","..wpw..",".wpppw.","wpp@ppw",".wpppw.","..wpw..","...w..."], {w:C.wh, p:C.pk, "@":C.wh});
 }
@@ -597,6 +598,8 @@ const MUSIC = {
 let musTrack = null, musNext = 0, musStep = 0;
 const mtof = n => 440 * Math.pow(2, (n - 69) / 12);
 function music(name) {
+  // the director takes the sound away for a few seconds; anything asking for music meanwhile just queues it
+  if (typeof SCARE !== "undefined" && SCARE.hush > 0) { SCARE.hushTrack = name; return; }
   if (name === "title" && typeof haunted === "function" && isNight() && haunted(2)) name = "titleNight";
   if (musTrack === name) return;
   musTrack = name; musStep = 0;
@@ -631,15 +634,15 @@ function freshMeta() {
     secrets: {vault1:false, vault2:false, vault3:false, untouched:false, static:false, mirror:false, signal:false, echo:false},
     stats: {runs:0, wins:0, bestDepth:0, kills:0, perfects:0, trueEnd:0, mines:0, bestWave:0,
       arcadeGames:0, dailies:0, bestScore:0, bestScoreWave:0, activeTime:0, bestRun:null,
-      catches:0, catchL:0, catchR:0, sessions:0, basements:0},
+      catches:0, catchL:0, catchR:0, sessions:0, basements:0, lanternRooms:0},
     arcade: [], initials: "AAA", name: "", pid: "", sent: {}, saveT: 0, cloud: {},
     seen: {}, ach: {}, history: [], npcs: {}, asc: 0, daily: null, dailyBest: 0, dailyFriends: [],
     synSeen: {}, modsSeen: {}, tutorialDone: false, hubSeen: false, gj: null, migr4: false,
     logs: {}, tapesDue: {}, flags: {}, playTime: 0, hauntSeen: false, milo: "",
-    lore: {}, loreDue: {}, hrs: new Array(24).fill(0), firstSeen: 0,
+    lore: {}, loreDue: {}, hrs: new Array(24).fill(0), firstSeen: 0, nights: 0, echoEnd: "",
     settings: {sound: 2, crt: true, fullscreen: false, vol: 8, musVol: 8, sfxVol: 8, curve: 2, tint: 0,
       phosphor: true, shake: true, effects: 2, rumble: true, haunt: 2,
-      taim: 0, tsize: 1, tfs: true, diff: 2}
+      taim: 0, tsize: 1, tfs: true, diff: 2, helper: 1}
   };
 }
 function mergeDeep(base, over) {

@@ -333,7 +333,7 @@ function loadRun() {
   } catch (e) { return null; }
 }
 function hurtRun(n) { run.lives = Math.max(0, run.lives - n); }
-function depthDiff(depth, layer) { if (depth === 5) return 1.22 + (layer || 0) * 0.03; return 1 + (depth - 1) * 0.16 + (layer || 0) * 0.025; }
+function depthDiff(depth, layer) { if (depth === 6) return 1.3 + (layer || 0) * 0.03; if (depth === 5) return 1.22 + (layer || 0) * 0.03; return 1 + (depth - 1) * 0.16 + (layer || 0) * 0.025; }
 const npcHere = id => !!(meta.npcs && meta.npcs[id]);
 function runWaves(depth, layer, kind) {
   const pools = [null,
@@ -341,9 +341,10 @@ function runWaves(depth, layer, kind) {
     ["sentry", "spreader", "sniper", "armor", "rusher", "shielder", "miner"],
     ["spreader", "sniper", "armor", "rusher", "splitter", "sentry", "shielder", "miner", "mirror"],
     ["sentry", "spreader", "sniper", "armor", "rusher", "splitter", "mirror", "shielder", "miner"],
-    ["hollow", "mimic", "sentry", "spreader", "hollow", "mimic", "armor", "sentry"]];
+    ["hollow", "mimic", "sentry", "spreader", "hollow", "mimic", "armor", "sentry"],
+    typeof LANTERN_POOL !== "undefined" ? LANTERN_POOL : ["armor", "mirror", "sentry"]];
   const pool = pools[depth];
-  const dN = depth === 5 ? 2 : depth;
+  const dN = depth === 5 ? 2 : depth === 6 ? 3 : depth;
   const nW = kind === "elite" ? 3 : 2;
   const out = [];
   for (let w = 0; w < nW; w++) {
@@ -359,12 +360,13 @@ const BOSS_FOR = [null, "warden", "furnace", "hydra", "echo"];
 
 function endRun(kind) {
   const glass = run.shield === "glass";
-  const won = kind === "win" || kind === "true" || kind === "free" || kind === "stay";
+  const won = kind === "win" || kind === "true" || kind === "free" || kind === "stay" || kind === "chip" || kind === "kept";
   if (kind === "dead" && (run.basement || run.depth === 5)) { if (!meta.flags) meta.flags = {}; meta.flags.miloLoss = 1; }
   let t = run.bank + Math.floor(run.kills * 0.5) + Math.floor(run.perfects * 0.3);
   if (kind === "win") t += 60;
   if (kind === "true") t += 150;
   if (kind === "free" || kind === "stay") t += 200;
+  if (kind === "chip" || kind === "kept") t += 300;
   if (glass) t *= 2;
   const nCurse = (run.curses || []).length;
   t *= (1 + 0.15 * nCurse) * (1 + 0.2 * (run.asc || 0));

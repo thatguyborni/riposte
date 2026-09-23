@@ -9,9 +9,9 @@ const TRAIN_STEPS = [
   {t: () => "A SHOT IS COMING. POINT YOUR SHIELD AT IT TO CATCH IT.", setup: g => trainSpawn("sentry", 0.7), done: g => g.parries >= 1},
   {t: () => "CAUGHT SHOTS FLY BACK AND HUNT THE NEAREST ENEMY. THEIR BULLETS ARE YOUR ONLY WEAPON. FINISH IT.",
    setup: g => { if (!g.foes.length) trainSpawn("sentry", 0.7); }, done: g => g.kills >= 1},
-  {t: () => "PERFECT CATCH: KEEP YOUR SHIELD AWAY, THEN CATCH THE SHOT LATE, RIGHT ON THE THIN WHITE INNER LINE.",
-   hint: "WAIT UNTIL IT'S ALMOST TOUCHING YOU, THEN SNAP THE SHIELD ONTO IT.",
-   setup: g => { g.foes = []; g.bullets = []; trainSpawn("sentry", 0.5); }, done: g => g.perfects >= 1},
+  {t: () => "PERFECT CATCH: KEEP THE SHIELD AWAY, LET THE SHOT COME ALL THE WAY IN, THEN SNAP ONTO IT ON THE WHITE INNER LINE. DO IT TWICE.",
+   hint: "TIME SLOWS DOWN WHILE A SHOT IS CLOSE. WAIT FOR THE LINE TO LIGHT UP, THEN TURN.",
+   slow: true, setup: g => { g.foes = []; g.bullets = []; trainSpawn("sentry", 0.5); }, done: g => g.perfects >= 2},
   {t: () => ctl("TOO MUCH COMING AT ONCE? PRESS SPACE TO PULSE. IT CATCHES EVERYTHING CLOSE TO YOU.", "TOO MUCH COMING AT ONCE? PULL RT TO PULSE. IT CATCHES EVERYTHING CLOSE TO YOU.", "TOO MUCH COMING AT ONCE? TAP PULSE. IT CATCHES EVERYTHING CLOSE TO YOU."),
    setup: g => { trainSpawn("spreader", 0.7); trainSpawn("spreader", 0.7); g.p.pulseCd = 0; }, done: g => g.pulses >= 1},
   {t: () => ctl("PRESS SHIFT TO DASH. NOTHING CAN HIT YOU MID-DASH.", "PULL LT (OR PRESS A) TO DASH. NOTHING CAN HIT YOU MID-DASH.", "TAP DASH. NOTHING CAN HIT YOU MID-DASH."), done: g => g.dashes >= 1},
@@ -54,6 +54,12 @@ const TrainingScene = {
     G.trainMoved += Math.hypot(p.x - G.lastX, p.y - G.lastY); G.lastX = p.x; G.lastY = p.y;
     let da = Math.abs(((p.aim - G.lastAim + Math.PI * 3) % TAU) - Math.PI); G.trainSwing += da; G.lastAim = p.aim;
     G.lives = 3;
+    // the perfect step: the world slows right down while a shot is in the zone, so the timing is visible
+    const st0 = TRAIN_STEPS[G.step];
+    if (st0 && st0.slow && !G.over) {
+      const close = G.bullets.some(b => !b.friend && Math.hypot(b.x - G.p.x, b.y - G.p.y) < 34 && ((b.x - G.p.x) * b.vx + (b.y - G.p.y) * b.vy) < 0);
+      G.slowT = close ? 0.3 : 0;
+    }
     combatTick(dt);
     G.stepT += dt;
     if (this.done > 0) { this.done -= dt; if (this.done <= 0) go(backTarget()); return; }

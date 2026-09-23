@@ -176,7 +176,9 @@ const LORE_TOAST = {
   b: "A B-SIDE WAS LEFT IN THE BACK ROOM.",
   p: "INPUT 2 RECORDED SOMETHING.",
   d: "SOMETHING WAS PINNED TO THE CORKBOARD.",
-  s: "THE CABINET PRINTED SOMETHING."
+  s: "THE CABINET PRINTED SOMETHING.",
+  n: "THE CABINET KEPT THAT NIGHT. IT'S IN THE ARCHIVE.",
+  l: "A LANTERN COIN-OP FILE WENT INTO THE ARCHIVE."
 };
 function checkLore() {
   if (!meta.loreDue) meta.loreDue = {};
@@ -222,7 +224,7 @@ const LoreScene = {
     else if (c === "d") noise(0.18, 0.05, 1600, 900);
     else { tone(180, 0.08, "square", 0.1); noise(0.12, 0.12, 2000, 800); }
   },
-  speed() { return this.e.c === "p" ? 20 : this.e.c === "s" ? 60 : this.e.c === "d" ? 9999 : 34; },
+  speed() { return this.e.c === "p" ? 20 : this.e.c === "s" ? 60 : "dnl".includes(this.e.c) ? 9999 : 34; },
   update(dt) {
     this.t += dt;
     const c = this.e.c, sp = this.speed(), n0 = Math.floor((this.t - dt) * sp), n1 = Math.floor(this.t * sp);
@@ -257,7 +259,7 @@ const LoreScene = {
     const e = this.e, c = e.c;
     if (c === "b") this.drawTape(true);
     else if (c === "p") this.drawP2();
-    else if (c === "d") this.drawPaper();
+    else if (c === "d" || c === "n" || c === "l") this.drawPaper();
     else this.drawLog();
     txt(this.done() ? ctl("ANY KEY TO CLOSE", "ANY BUTTON TO CLOSE", "TAP TO CLOSE") : ctl("ANY KEY TO SKIP", "ANY BUTTON TO SKIP", "TAP TO SKIP"),
       W / 2, 229, c === "d" ? C.gy : C.gy, 1, "c");
@@ -349,7 +351,7 @@ const LoreScene = {
 const TAPE_HINT = [null, "PLAY ANYTHING AT ALL.", "PLAY A FEW DESCENTS, OR LAST TO WAVE 5.", "LEAVE THE TITLE SCREEN ALONE FOR A WHILE.",
   "BEAT THE FIRST GUARDIAN.", "PLAY LATE AT NIGHT, OR FOR 45 MINUTES.", "BEAT THE SECOND GUARDIAN.", "PUT YOUR NAME ON THE TABLE TWICE.",
   "FIND A ROOM THAT ISN'T ON THE MAP.", "SOMEWHERE BELOW, A VOICE IS COUNTING. LISTEN.", "BEAT THE THIRD GUARDIAN.", "ASCEND.", "HEAR EVERY OTHER TAPE."];
-const ARCH_CATS = [["t", "TAPES"], ["b", "B-SIDES"], ["p", "PLAYER 2"], ["d", "PAPERS"], ["s", "LOGS"]];
+const ARCH_CATS = [["t", "TAPES"], ["b", "B-SIDES"], ["p", "PLAYER 2"], ["n", "NIGHTS"], ["l", "LANTERN"], ["d", "PAPERS"], ["s", "LOGS"]];
 function archEntries(cat) {
   if (cat === "t") return Array.from({length: TAPE_COUNT}, (_, k) => {
     const i = k + 1, got = tapeRead(i), due = tapeDue(i);
@@ -357,7 +359,8 @@ function archEntries(cat) {
       info: got ? tapeDate(i) + "  ~  " + ctl("PRESS ENTER", "PRESS A", "TAP IT") + " TO PLAY IT AGAIN." : due ? "IT'S ON THE FLOOR OF THE BACK ROOM." : "HOW TO FIND IT: " + TAPE_HINT[i],
       open: () => go(TapeScene, {id: i, from: CodexScene})};
   });
-  const where = {b: "IT'S ON THE FLOOR OF THE BACK ROOM.", p: "IT'S WAITING IN THE BACK ROOM.", d: "IT'S PINNED TO THE CORKBOARD.", s: "IT'S HANGING OUT OF THE DAILY CABINET."};
+  const where = {b: "IT'S ON THE FLOOR OF THE BACK ROOM.", p: "IT'S WAITING IN THE BACK ROOM.", d: "IT'S PINNED TO THE CORKBOARD.",
+    s: "IT'S HANGING OUT OF THE DAILY CABINET.", n: "IT'S IN THE ARCHIVE. THE CABINET KEPT IT.", l: "IT CAME UP FROM THE LANTERN FLOOR."};
   return loreOf(cat).map(e => {
     const got = loreRead(e.id), due = loreDue(e.id), n = loreNum(e);
     return {num: cat === "d" || cat === "s" ? String(n).padStart(2, "0") : cat.toUpperCase() + n, name: got ? e.n : due ? "WAITING IN THE BACK ROOM" : "???", got, due,
@@ -373,19 +376,26 @@ function archCatCount(cat) {
 function drawArchive(sc) {
   let info = null;
   sc.cat = sc.cat || "t";
+  if (!ARCH_CATS.some(c => c[0] === sc.cat)) sc.cat = "t";
+  // categories down the left, entries on the right
   ARCH_CATS.forEach(([k, l], i) => {
     const [a, b] = archCatCount(k), on = sc.cat === k, dueN = k === "t" ? dueTapes().length : dueLore(k).length;
-    const s = btn(sc, l + " " + a + "/" + b, 24 + i * 68, 38, 64, 11, () => { sc.cat = k; }, {col: on ? C.pk : a ? C.lg : C.gy, dim: on ? C.pk : C.nv});
-    if (dueN && Math.floor(T * 3) % 2) P(24 + i * 68 + 62, 39, C.rd);
+    const y = 38 + i * 15;
+    const s = btn(sc, null, 22, y, 84, 13, () => { sc.cat = k; }, {col: on ? C.pk : a ? C.lg : C.gy, dim: on ? C.pk : C.nv});
+    txt(l, 26, y + 4, s ? C.k : on ? C.pk : a ? C.lg : C.gy);
+    txt(a + "/" + b, 102, y + 4, s ? C.k : C.gy, 1, "r");
+    if (dueN && Math.floor(T * 3) % 2) P(20, y + 6, C.rd);
     if (s) info = {t: "RECORDED ON THE CASSETTES D.O. LEFT, IN ORDER.", b: "THE OTHER SIDES OF HIS TAPES. LATER. AFTER HE TOOK IT HOME.",
-      p: "THE CABINET HAS A SECOND INPUT. NOTHING IS PLUGGED INTO IT.", d: "PAPERS THAT TURN UP ON THE CORKBOARD IN THE BACK ROOM.",
+      p: "THE CABINET HAS A SECOND INPUT. NOTHING IS PLUGGED INTO IT.", n: "NIGHTS ON THE FLOOR OF THE STARLITE, 1989. IT KEPT ALL OF THEM.",
+    l: "PAPERWORK FROM THE FACTORY THAT BUILT IT, AND WHAT IS LEFT ON ITS TEST FLOOR.",
+    d: "PAPERS THAT TURN UP ON THE CORKBOARD IN THE BACK ROOM.",
       s: "THE CABINET PRINTS THESE ITSELF. IT'S BEEN KEEPING NOTES."}[k];
   });
   archEntries(sc.cat).forEach((e, i) => {
-    const cx = 24 + (i % 2) * 170, cy = 56 + Math.floor(i / 2) * 16;
-    const s = btn(sc, null, cx, cy, 164, 13, () => { if (e.got) e.open(); }, {col: e.got ? C.pk : C.gy, dim: C.nv, disabled: !e.got});
-    txt(e.num, cx + 4, cy + 4, s && e.got ? C.k : e.due ? C.rd : C.gy);
-    txt(e.name, cx + 22, cy + 4, s && e.got ? C.k : e.got ? C.lg : e.due ? C.pk : C.gy);
+    const cx = 114 + (i % 2) * 128, cy = 38 + Math.floor(i / 2) * 15;
+    const s = btn(sc, null, cx, cy, 124, 13, () => { if (e.got) e.open(); }, {col: e.got ? C.pk : C.gy, dim: C.nv, disabled: !e.got});
+    txt(e.num, cx + 3, cy + 4, s && e.got ? C.k : e.due ? C.rd : C.gy);
+    txt(e.name.slice(0, 24), cx + 20, cy + 4, s && e.got ? C.k : e.got ? C.lg : e.due ? C.pk : C.gy);
     if (s) info = e.info;
   });
   txt(archiveCount() + "/" + (TAPE_COUNT + LORE.length) + " FOUND", W - 24, 9, C.gy, 1, "r");
